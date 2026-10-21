@@ -74,11 +74,6 @@ http://127.0.0.1:8000/mcp
 4. Commit small changes and push frequently.
 5. Never store API keys in Git.
 
-## Prompts
-
-- Codex: `docs/codex-task-plan.md`
-- Claude Code: `docs/claude-task-plan.md`
-
 ## Amazon Devices Builder Tools
 
 They are primarily for Fire TV/Vega development and are optional for this Alexa+ project. If you want to install them for AI coding context, run this from your normal terminal:
