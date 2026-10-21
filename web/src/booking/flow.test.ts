@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Booking, SearchAvailabilityInput, SearchResult } from '../contract/types';
-import { canConfirm, flowReducer, initialFlow, type CurrentBooking, type FlowEvent, type FlowState } from './flow';
+import type { Availability, Booking, BookingResult, SearchAvailabilityInput } from '../contract/types';
+import { canConfirm, flowReducer, initialFlow, type FlowEvent, type FlowState } from './flow';
 
 const search: SearchAvailabilityInput = {
   provider_type: 'restaurant',
@@ -12,28 +12,47 @@ const search: SearchAvailabilityInput = {
   room_type: null,
   preferences: ['quiet'],
 };
-const slot: SearchResult = {
+const slot: Availability = {
+  availability_id: 'avail_rest_001_20261022_1900',
   listing_id: 'rest_001',
-  name: 'Baan Suan Garden Kitchen',
+  name: 'Siam Serenity',
   provider_type: 'restaurant',
   location: 'Bangkok',
   start_time: '2026-10-22T19:00:00+07:00',
   end_time: '2026-10-22T21:00:00+07:00',
+  party_size: 2,
+  service_type: null,
+  room_type: null,
   price: 0,
   currency: 'THB',
-  reason: 'Matches quiet; table for 2 free at 7:00 PM',
+  reason: 'Quiet seating and a table for 2 is available at Siam Serenity',
 };
-const heldRecord: Booking = { booking_id: 'bk_1001', status: 'held', expires_at: '2026-10-21T10:02:00+07:00', summary: 'On hold' };
-const booking: CurrentBooking = {
-  record: heldRecord,
-  slot,
-  partySize: 2,
-  guest: { guest_name: 'Demo Guest', guest_contact: 'demo@example.com' },
+const heldBooking: Booking = {
+  booking_id: 'booking_1',
+  availability_id: slot.availability_id,
+  listing_id: 'rest_001',
+  provider_type: 'restaurant',
+  status: 'held',
+  start_time: slot.start_time,
+  end_time: slot.end_time,
+  guest_name: 'Demo Guest',
+  guest_contact: 'demo@example.com',
+  party_size: 2,
+  service_type: null,
+  room_type: null,
+  expires_at: '2026-10-21T03:05:00.000Z',
+  created_at: '2026-10-21T03:00:00.000Z',
+  updated_at: '2026-10-21T03:00:00.000Z',
 };
+const result = (status: Booking['status'], summary = status): BookingResult => ({
+  booking: { ...heldBooking, status, expires_at: status === 'held' ? heldBooking.expires_at : null },
+  summary,
+});
 
 const run = (...events: FlowEvent[]) => events.reduce<FlowState>(flowReducer, initialFlow());
 const withResults = () => run({ type: 'search_started', search, assumed: [] }, { type: 'search_succeeded', results: [slot] });
-const withHold = () => flowReducer(flowReducer(withResults(), { type: 'started', task: 'hold' }), { type: 'held', booking });
+const withHold = () =>
+  flowReducer(flowReducer(withResults(), { type: 'started', task: 'hold' }), { type: 'held', result: result('held'), slot });
 
 describe('booking steps', () => {
   it('never confirms straight from search results', () => {
@@ -48,46 +67,58 @@ describe('booking steps', () => {
     expect(canConfirm(held)).toBe(true);
     const confirming = flowReducer(held, { type: 'started', task: 'confirm' });
     expect(confirming.busy).toBe('confirm');
-    const done = flowReducer(confirming, { type: 'confirmed', record: { ...heldRecord, status: 'confirmed' } });
+    const done = flowReducer(confirming, { type: 'confirmed', result: result('confirmed') });
     expect(done.view).toBe('confirmed');
+    expect(done.current?.booking.expires_at).toBeNull();
     expect(canConfirm(done)).toBe(false);
   });
 
-  it('cannot confirm a hold that ran out', () => {
-    const expired = flowReducer(withHold(), { type: 'hold_expired' });
-    expect(expired.booking?.record.status).toBe('expired');
+  it('cannot confirm a hold that ran out, and stops waiting', () => {
+    const confirming = flowReducer(withHold(), { type: 'started', task: 'confirm' });
+    const expired = flowReducer(confirming, { type: 'hold_expired' });
+    expect(expired.current?.booking.status).toBe('expired');
+    expect(expired.busy).toBeNull();
     expect(canConfirm(expired)).toBe(false);
   });
 
   it('goes back to the results when a hold is released', () => {
     const released = flowReducer(flowReducer(withHold(), { type: 'started', task: 'cancel' }), {
       type: 'cancelled',
-      record: { ...heldRecord, status: 'cancelled' },
+      result: result('cancelled'),
     });
     expect(released.view).toBe('results');
-    expect(released.booking).toBeNull();
+    expect(released.current).toBeNull();
   });
 
-  it('shows alternatives when the hold is lost at confirmation', () => {
-    const alternative = { ...slot, start_time: '2026-10-22T19:30:00+07:00', end_time: '2026-10-22T21:30:00+07:00' };
-    const state = flowReducer(flowReducer(withHold(), { type: 'started', task: 'confirm' }), {
+  it('shows the server’s alternatives when a hold conflicts', () => {
+    const alternative = { ...slot, availability_id: 'avail_rest_001_20261022_1930', start_time: '2026-10-22T19:30:00+07:00' };
+    const state = flowReducer(flowReducer(withResults(), { type: 'started', task: 'hold' }), {
       type: 'conflict',
-      conflict: { message: 'Hold expired.', during: 'confirm', alternatives: [alternative] },
+      conflict: { message: 'That time is no longer available.', during: 'hold', alternatives: [alternative] },
     });
     expect(state.view).toBe('results');
-    expect(state.booking).toBeNull();
     expect(state.results).toEqual([alternative]);
     expect(state.busy).toBeNull();
   });
 
+  it('keeps the booking and view when a change conflicts', () => {
+    const confirmed = flowReducer(withHold(), { type: 'confirmed', result: result('confirmed') });
+    const state = flowReducer(flowReducer(confirmed, { type: 'started', task: 'modify' }), {
+      type: 'conflict',
+      conflict: { message: 'No slot then.', during: 'modify', alternatives: [] },
+    });
+    expect(state.view).toBe('confirmed');
+    expect(state.current?.booking.status).toBe('confirmed');
+  });
+
   it('keeps a confirmed booking reachable after a new search', () => {
-    const confirmed = flowReducer(withHold(), { type: 'confirmed', record: { ...heldRecord, status: 'confirmed' } });
+    const confirmed = flowReducer(withHold(), { type: 'confirmed', result: result('confirmed') });
     const searched = flowReducer(flowReducer(confirmed, { type: 'search_started', search, assumed: [] }), {
       type: 'search_succeeded',
       results: [],
     });
     expect(searched.view).toBe('results');
-    expect(searched.booking?.record.status).toBe('confirmed');
+    expect(searched.current?.booking.status).toBe('confirmed');
     expect(flowReducer(searched, { type: 'booking_shown' }).view).toBe('confirmed');
   });
 

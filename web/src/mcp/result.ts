@@ -1,4 +1,5 @@
-import type { ToolOutcome } from './types';
+import type { Availability, BookingStatus } from '../contract/types';
+import type { ToolError, ToolOutcome } from './types';
 
 /** The parts of an MCP CallToolResult the page reads. */
 export interface CallToolResultLike {
@@ -7,21 +8,20 @@ export interface CallToolResultLike {
   isError?: boolean;
 }
 
-export const ERROR_CODES = {
-  slotUnavailable: 'slot_unavailable',
-  holdExpired: 'hold_expired',
-  notFound: 'not_found',
+/** Codes the page itself uses, next to the contract's business codes. */
+export const CLIENT_ERROR_CODES = {
   invalidInput: 'invalid_input',
   badResponse: 'bad_response',
+  unreachable: 'server_unreachable',
+  sessionLost: 'session_lost',
+  protocol: 'protocol_error',
 } as const;
 
-// The contract has no error format yet: today a failing tool returns isError with plain
-// text only. Read a code from structured content if the backend adds one, else guess from text.
+// Business errors carry a structured payload. Input the server rejects before the tool runs
+// comes back as isError with plain text only, so that is read from the text.
 const TEXT_CLUES: Array<[RegExp, string]> = [
-  [/expired|ran out/i, ERROR_CODES.holdExpired],
-  [/unavailable|taken|no longer available|conflict|already booked/i, ERROR_CODES.slotUnavailable],
-  [/not found|unknown|no such/i, ERROR_CODES.notFound],
-  [/invalid|must be|required|too many|too large/i, ERROR_CODES.invalidInput],
+  [/validation error|invalid|must be|required|should be/i, CLIENT_ERROR_CODES.invalidInput],
+  [/unknown tool/i, CLIENT_ERROR_CODES.protocol],
 ];
 
 function textOf(result: CallToolResultLike): string {
@@ -32,37 +32,42 @@ function textOf(result: CallToolResultLike): string {
     .trim();
 }
 
-function structuredError(value: unknown): { code?: string; message?: string } {
-  if (!value || typeof value !== 'object') return {};
-  const record = value as Record<string, unknown>;
-  const inner = record.error && typeof record.error === 'object' ? (record.error as Record<string, unknown>) : record;
-  return {
-    code: typeof inner.code === 'string' ? inner.code : undefined,
-    message: typeof inner.message === 'string' ? inner.message : undefined,
-  };
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+export function toolError(message: string, code: string | null = null, extra: Partial<ToolError> = {}): ToolError {
+  return { code, message, retryable: true, alternatives: [], currentStatus: null, ...extra };
 }
 
-export function codeFromText(text: string): string | null {
-  return TEXT_CLUES.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+function businessError(structured: unknown, text: string): ToolError {
+  const payload = isRecord(structured) ? structured : {};
+  const error = isRecord(payload.error) ? payload.error : {};
+  const code = typeof error.code === 'string' ? error.code : null;
+  const message = typeof error.message === 'string' ? error.message : text || 'The tool reported an error.';
+  return {
+    code: code ?? TEXT_CLUES.find(([pattern]) => pattern.test(message))?.[1] ?? null,
+    message,
+    retryable: typeof error.retryable === 'boolean' ? error.retryable : true,
+    alternatives: Array.isArray(payload.alternatives) ? (payload.alternatives as Availability[]) : [],
+    currentStatus: typeof error.current_status === 'string' ? (error.current_status as BookingStatus) : null,
+  };
 }
 
 /** Turn a CallToolResult into data or an error the page can act on. */
 export function readToolResult<T>(result: CallToolResultLike): ToolOutcome<T> {
   const text = textOf(result);
-  if (result.isError) {
-    const structured = structuredError(result.structuredContent);
-    const message = structured.message ?? (text || 'The tool reported an error without a message.');
-    return { ok: false, error: { code: structured.code ?? codeFromText(message), message } };
-  }
+  if (result.isError) return { ok: false, error: businessError(result.structuredContent, text) };
   if (result.structuredContent !== undefined && result.structuredContent !== null) {
-    return { ok: true, data: result.structuredContent as T, text };
+    return { ok: true, data: result.structuredContent as T };
   }
   try {
-    return { ok: true, data: JSON.parse(text) as T, text };
+    return { ok: true, data: JSON.parse(text) as T };
   } catch {
     return {
       ok: false,
-      error: { code: ERROR_CODES.badResponse, message: 'The server answered, but not with data the page can read.' },
+      error: toolError('The server answered, but not with data the page can read.', CLIENT_ERROR_CODES.badResponse, {
+        retryable: false,
+      }),
     };
   }
 }

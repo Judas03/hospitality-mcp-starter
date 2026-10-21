@@ -74,8 +74,8 @@ select {
 
 .app {
   height: 100dvh;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   background:
     radial-gradient(1200px 500px at 15% -10%, rgba(60, 200, 245, 0.08), transparent 60%),
     radial-gradient(900px 500px at 100% 0%, rgba(139, 123, 255, 0.08), transparent 60%),
@@ -83,11 +83,29 @@ select {
 }
 
 .layout {
+  flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   gap: 16px;
   padding: 0 20px 20px;
   min-height: 0;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 20px 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius-small);
+  border: 1px solid rgba(255, 122, 137, 0.45);
+  background: var(--danger-soft);
+}
+
+.capitalize {
+  text-transform: capitalize;
 }
 
 .side {
@@ -786,6 +804,46 @@ select {
   color: var(--accent);
 }
 
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slot {
+  padding: 5px 12px;
+  border-radius: var(--radius-small);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.slot:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.slot.best {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.slot.best:hover:not(:disabled) {
+  background: #6dd8fa;
+  color: var(--accent-ink);
+}
+
+.slot:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .result-side {
   display: flex;
   flex-direction: column;
@@ -1146,6 +1204,9 @@ select {
   .app {
     height: auto;
     min-height: 100dvh;
+  }
+  .banner {
+    margin: 0 16px 16px;
   }
   .layout {
     grid-template-columns: minmax(0, 1fr);

@@ -1,10 +1,11 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import type { CurrentBooking, FlowState, View } from '../booking/flow';
 import type { Agent } from '../booking/useBookingAgent';
-import type { ProviderType, SearchAvailabilityInput, SearchResult } from '../contract/types';
+import type { Availability, ProviderType, SearchAvailabilityInput } from '../contract/types';
 import { DEFAULT_LOCATION, DEFAULT_TIMES } from '../conversation/understand';
-import { partyLabel, priceLabel } from '../lib/format';
-import { addDays, bangkokDate, formatClockTime, formatDate, formatRange, formatTime } from '../lib/time';
+import { durationLabel, partyLabel, priceLabel } from '../lib/format';
+import { groupByPlace, type Place } from '../lib/places';
+import { addDays, bangkokDate, formatClockTime, formatDate, formatTime } from '../lib/time';
 import { BookingTicket, CancelledCard, ConflictCard, HoldCard, ListingDetails } from './BookingCards';
 import { EmptyState, ErrorMessage, Skeleton } from './Feedback';
 import { IconCalendar, IconCheck, IconClock, IconEdit, IconPin, IconSparkle, IconUsers, ProviderIcon } from './icons';
@@ -16,11 +17,6 @@ export function BookingPanel({ agent }: { agent: Agent }) {
   const { state } = agent;
   const [editing, setEditing] = useState(false);
   const busy = state.busy !== null;
-  const detailsName =
-    state.details &&
-    (state.results.find((result) => result.listing_id === state.details?.listingId)?.name ??
-      state.booking?.slot.name ??
-      state.details.listingId);
 
   return (
     <section className="panel booking" aria-labelledby="booking-title">
@@ -31,7 +27,7 @@ export function BookingPanel({ agent }: { agent: Agent }) {
       <div className="panel-body">
         {state.error && <ErrorMessage message={state.error.message} onRetry={agent.retry} onDismiss={agent.dismissError} />}
         {state.conflict && (
-          <ConflictCard conflict={state.conflict} busy={busy} onChoose={(result) => void agent.chooseAlternative(result)} />
+          <ConflictCard conflict={state.conflict} busy={busy} onChoose={(slot) => void agent.chooseAlternative(slot)} />
         )}
         {editing ? (
           <SearchForm
@@ -48,9 +44,7 @@ export function BookingPanel({ agent }: { agent: Agent }) {
           <PanelContent agent={agent} onEdit={() => setEditing(true)} />
         )}
       </div>
-      {state.details && detailsName && (
-        <ListingDetails name={detailsName} data={state.details.data} onClose={agent.closeDetails} />
-      )}
+      {state.details && <ListingDetails listing={state.details.listing} onClose={agent.closeDetails} />}
     </section>
   );
 }
@@ -70,11 +64,11 @@ function PanelContent({ agent, onEdit }: { agent: Agent; onEdit(): void }) {
       </>
     );
   }
-  if (state.view === 'held' && state.booking) {
+  if (state.view === 'held' && state.current) {
     return (
       <HoldCard
-        key={state.booking.record.booking_id}
-        booking={state.booking}
+        key={state.current.booking.booking_id}
+        current={state.current}
         busy={busy}
         onConfirm={() => void agent.confirm()}
         onRelease={() => void agent.release()}
@@ -83,29 +77,29 @@ function PanelContent({ agent, onEdit }: { agent: Agent; onEdit(): void }) {
       />
     );
   }
-  if (state.view === 'confirmed' && state.booking) {
+  if (state.view === 'confirmed' && state.current) {
     return (
       <BookingTicket
-        booking={state.booking}
+        current={state.current}
         busy={busy}
         onModify={(change) => void agent.modify(change)}
         onCancel={() => void agent.cancel()}
       />
     );
   }
-  if (state.view === 'cancelled' && state.booking) {
-    return <CancelledCard booking={state.booking} onStartOver={agent.startOver} />;
+  if (state.view === 'cancelled' && state.current) {
+    return <CancelledCard current={state.current} onStartOver={agent.startOver} />;
   }
   if (state.view === 'results' && state.search) {
     return (
       <>
-        {state.booking?.record.status === 'confirmed' && <BookingStrip booking={state.booking} onShow={agent.showBooking} />}
+        {state.current?.booking.status === 'confirmed' && <BookingStrip current={state.current} onShow={agent.showBooking} />}
         {summary}
         <ResultsList
           results={state.results}
           busy={busy}
-          onHold={(result) => void agent.hold(result)}
-          onDetails={(result) => void agent.showDetails(result.listing_id)}
+          onHold={(slot) => void agent.hold(slot)}
+          onDetails={(listingId) => void agent.showDetails(listingId)}
         />
       </>
     );
@@ -193,8 +187,8 @@ export function SearchSummary({
   );
 }
 
-const ROOM_TYPES = ['single', 'double', 'twin', 'suite', 'family'];
-const SERVICE_TYPES = ['haircut', 'hair colour', 'blow dry', 'manicure', 'pedicure', 'massage', 'facial', 'beard trim'];
+const ROOM_TYPES = ['standard', 'deluxe', 'suite'];
+const SERVICE_TYPES = ['haircut', 'manicure'];
 
 /** The same search as a form: the fallback when typing is not understood, and a way to correct it. */
 export function SearchForm({
@@ -245,7 +239,13 @@ export function SearchForm({
       <div className="form-grid">
         <label>
           Type
-          <select value={provider} onChange={(event) => setProvider(event.target.value as ProviderType)}>
+          <select
+            value={provider}
+            onChange={(event) => {
+              setProvider(event.target.value as ProviderType);
+              setOption('');
+            }}
+          >
             <option value="restaurant">Restaurant</option>
             <option value="salon">Salon</option>
             <option value="hotel">Hotel</option>
@@ -270,7 +270,7 @@ export function SearchForm({
             min={1}
             max={20}
             value={party}
-            onChange={(event) => setParty(Math.max(1, Number(event.target.value) || 1))}
+            onChange={(event) => setParty(Math.min(20, Math.max(1, Number(event.target.value) || 1)))}
             required
           />
         </label>
@@ -279,16 +279,16 @@ export function SearchForm({
             {provider === 'salon' ? 'Service' : 'Room type'}
             <select value={option} onChange={(event) => setOption(event.target.value)}>
               <option value="">Any</option>
-              {(provider === 'salon' ? SERVICE_TYPES : ROOM_TYPES).map((name) => (
-                <option key={name} value={name}>
-                  {name}
+              {(provider === 'salon' ? SERVICE_TYPES : ROOM_TYPES).map((choice) => (
+                <option key={choice} value={choice}>
+                  {choice}
                 </option>
               ))}
             </select>
           </label>
         )}
         <label className="span-2">
-          Wishes <span className="label-note">comma separated, e.g. quiet, outdoor</span>
+          Wishes <span className="label-note">comma separated, e.g. quiet, river view, outdoor seating</span>
           <input value={wishes} onChange={(event) => setWishes(event.target.value)} />
         </label>
         <label>
@@ -318,45 +318,68 @@ export function ResultsList({
   onHold,
   onDetails,
 }: {
-  results: SearchResult[];
+  results: Availability[];
   busy: boolean;
-  onHold(result: SearchResult): void;
-  onDetails(result: SearchResult): void;
+  onHold(slot: Availability): void;
+  onDetails(listingId: string): void;
 }) {
   if (results.length === 0) {
     return (
       <EmptyState title="Nothing free for that">
-        Try another time or day, fewer wishes, or a different city. The demo data covers Bangkok.
+        Try another time or day, or fewer wishes. Every wish has to match the place.
       </EmptyState>
     );
   }
   return (
     <ol className="results" aria-label="Options">
-      {results.map((result, index) => (
-        <li key={`${result.listing_id}-${result.start_time}`}>
-          <ResultCard result={result} position={index + 1} best={index === 0} busy={busy} onHold={onHold} onDetails={onDetails} />
+      {groupByPlace(results).map((place, index) => (
+        <li key={place.listing_id}>
+          <PlaceCard place={place} position={index + 1} busy={busy} onHold={onHold} onDetails={onDetails} />
         </li>
       ))}
     </ol>
   );
 }
 
-export function ResultCard({
-  result,
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** The text on a slot button: only what tells this place's options apart. */
+function slotLabel(slot: Availability, place: Place): string {
+  const parts: string[] = [];
+  const oneTime = place.slots.every((other) => other.start_time === slot.start_time);
+  const qualifier = slot.service_type ?? slot.room_type;
+  const mixedOptions = new Set(place.slots.map((other) => other.service_type ?? other.room_type)).size > 1;
+  const mixedPrices = new Set(place.slots.map((other) => other.price)).size > 1;
+  if (!oneTime) parts.push(formatTime(slot.start_time));
+  if (qualifier && (mixedOptions || oneTime)) parts.push(capitalize(qualifier));
+  if (mixedPrices) parts.push(priceLabel(slot));
+  return parts.join(' · ');
+}
+
+function placeMeta(slot: Availability): string {
+  if (slot.provider_type === 'hotel') {
+    return `${slot.location} · check-in ${formatDate(slot.start_time)} ${formatTime(slot.start_time)}, check-out ${formatDate(slot.end_time)} ${formatTime(slot.end_time)}`;
+  }
+  return `${slot.location} · ${formatDate(slot.start_time)} · ${durationLabel(slot.start_time, slot.end_time)}`;
+}
+
+export function PlaceCard({
+  place,
   position,
-  best,
   busy,
   onHold,
   onDetails,
 }: {
-  result: SearchResult;
+  place: Place;
   position: number;
-  best: boolean;
   busy: boolean;
-  onHold(result: SearchResult): void;
-  onDetails(result: SearchResult): void;
+  onHold(slot: Availability): void;
+  onDetails(listingId: string): void;
 }) {
-  const titleId = `result-${result.listing_id}-${position}`;
+  const [best] = place.slots;
+  const titleId = `place-${place.listing_id}`;
+  const prices = place.slots.map((slot) => slot.price);
+  const cheapest = place.slots[prices.indexOf(Math.min(...prices))];
   return (
     <article className="card result" aria-labelledby={titleId}>
       <span className="position" aria-hidden="true">
@@ -364,41 +387,51 @@ export function ResultCard({
       </span>
       <div className="result-main">
         <h3 id={titleId}>
-          {result.name}
-          {best && <span className="badge">Best match</span>}
+          {place.name}
+          {position === 1 && <span className="badge">Best match</span>}
         </h3>
-        <p className="meta">
-          {result.location} · {formatRange(result.start_time, result.end_time)}
-        </p>
+        <p className="meta">{placeMeta(best)}</p>
         <p className="reason">
           <IconSparkle />
           <span>
             <span className="sr-only">Why: </span>
-            {result.reason}
+            {best.reason}
           </span>
         </p>
+        <ul className="slots" aria-label={`Options at ${place.name}`}>
+          {place.slots.map((slot, index) => (
+            <li key={slot.availability_id}>
+              <button
+                type="button"
+                className={index === 0 ? 'slot best' : 'slot'}
+                disabled={busy}
+                onClick={() => onHold(slot)}
+              >
+                <span className="sr-only">Hold </span>
+                {slotLabel(slot, place)}
+                <span className="sr-only"> at {place.name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
       <div className="result-side">
-        <span className="price">{priceLabel(result)}</span>
-        <button type="button" className="btn primary small" disabled={busy} onClick={() => onHold(result)}>
-          Hold
-          <span className="sr-only"> {result.name}</span>
-        </button>
-        <button type="button" className="btn ghost small" disabled={busy} onClick={() => onDetails(result)}>
+        <span className="price">{new Set(prices).size > 1 ? `from ${priceLabel(cheapest)}` : priceLabel(best)}</span>
+        <button type="button" className="btn ghost small" disabled={busy} onClick={() => onDetails(place.listing_id)}>
           Details
-          <span className="sr-only"> about {result.name}</span>
+          <span className="sr-only"> about {place.name}</span>
         </button>
       </div>
     </article>
   );
 }
 
-function BookingStrip({ booking, onShow }: { booking: CurrentBooking; onShow(): void }) {
+function BookingStrip({ current, onShow }: { current: CurrentBooking; onShow(): void }) {
   return (
     <div className="strip">
       <span>
-        <strong>Your booking:</strong> {booking.slot.name}, {formatDate(booking.slot.start_time)} at{' '}
-        {formatTime(booking.slot.start_time)}
+        <strong>Your booking:</strong> {current.slot.name}, {formatDate(current.booking.start_time)} at{' '}
+        {formatTime(current.booking.start_time)}
       </span>
       <button type="button" className="btn ghost small" onClick={onShow}>
         View

@@ -1,0 +1,2 @@
+# Machine-specific settings, such as VITE_MCP_URL when the server is not on port 8000.
+*.local

@@ -1,15 +1,15 @@
 import { useMemo, useReducer, useRef, useState } from 'react';
 import {
   DEMO_GUEST,
+  type Availability,
   type ModifyBookingInput,
   type ProviderType,
   type SearchAvailabilityInput,
-  type SearchResult,
 } from '../contract/types';
 import * as replies from '../conversation/replies';
 import { completeSearch, understand } from '../conversation/understand';
-import { addMinutes, splitIso, toIsoDateTime } from '../lib/time';
-import { ERROR_CODES } from '../mcp/result';
+import { groupByPlace } from '../lib/places';
+import { splitIso, toIsoDateTime } from '../lib/time';
 import type { ToolClient, ToolError } from '../mcp/types';
 import { canConfirm, flowReducer, initialFlow, type FlowState, type Guest } from './flow';
 
@@ -33,12 +33,12 @@ export interface Agent {
   send(text: string): void;
   search(input: SearchAvailabilityInput, assumed?: Array<keyof SearchAvailabilityInput>): Promise<void>;
   searchAgain(): Promise<void>;
-  hold(result: SearchResult): Promise<void>;
+  hold(slot: Availability): Promise<void>;
   confirm(): Promise<void>;
   release(): Promise<void>;
   modify(change: Change): Promise<void>;
   cancel(): Promise<void>;
-  chooseAlternative(result: SearchResult): Promise<void>;
+  chooseAlternative(slot: Availability): Promise<void>;
   showDetails(listingId: string): Promise<void>;
   closeDetails(): void;
   showBooking(): void;
@@ -49,7 +49,7 @@ export interface Agent {
   dismissError(): void;
 }
 
-const minutesBetween = (start: string, end: string) => (new Date(end).getTime() - new Date(start).getTime()) / 60_000;
+const sameInstant = (a: string, b: string) => Date.parse(a) === Date.parse(b);
 
 /** Runs the conversation: reads each request, calls the MCP tools, and keeps the booking steps. */
 export function useBookingAgent(client: ToolClient, now: () => Date = () => new Date()): Agent {
@@ -73,30 +73,23 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
       setMessages((list) => [...list, { id: nextId.current++, role, text }]);
     const say = (text: string) => add('assistant', text);
 
-    /** A slot that is gone becomes a conflict with alternatives; anything else is an error. */
-    async function settleFailure(
-      during: 'hold' | 'confirm' | 'modify',
-      error: ToolError,
-      slot: SearchResult | null,
-      searchInput: SearchAvailabilityInput | null,
-    ) {
-      const slotGone = error.code === ERROR_CODES.slotUnavailable || error.code === ERROR_CODES.holdExpired;
-      if (!slotGone || !searchInput) {
-        dispatch({ type: 'failed', message: error.message });
-        say(replies.failed(error.message));
-        return;
+    const fail = (error: ToolError) => {
+      dispatch({ type: 'failed', message: error.message });
+      say(replies.failed(error.message));
+    };
+
+    /** An option that is gone becomes a conflict showing the server's alternatives. */
+    function settle(during: 'hold' | 'confirm' | 'modify', error: ToolError) {
+      if (error.code === 'slot_unavailable') {
+        dispatch({ type: 'conflict', conflict: { message: error.message, during, alternatives: error.alternatives } });
+        return say(replies.conflict(error.message, error.alternatives));
       }
-      const found = await client.callTool('search_availability', searchInput);
-      let alternatives = found.ok && Array.isArray(found.data.results) ? found.data.results : [];
-      if (slot) {
-        alternatives = alternatives.filter(
-          (result) => !(result.listing_id === slot.listing_id && result.start_time === slot.start_time),
-        );
-        if (during === 'modify') alternatives = alternatives.filter((result) => result.listing_id === slot.listing_id);
+      if (error.code === 'hold_expired') {
+        dispatch({ type: 'hold_expired' });
+        const name = stateRef.current.current?.slot.name;
+        return say(name ? replies.expired(name) : error.message);
       }
-      alternatives = alternatives.slice(0, 2);
-      dispatch({ type: 'conflict', conflict: { message: error.message, during, alternatives } });
-      say(replies.conflict(error.message, alternatives));
+      fail(error);
     }
 
     async function search(input: SearchAvailabilityInput, assumed: Array<keyof SearchAvailabilityInput> = []) {
@@ -104,147 +97,171 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
       if (current.busy) return say(replies.BUSY);
       lastStep.current = () => search(input, assumed);
       // A new search lets go of a hold that was never confirmed.
-      if (current.booking?.record.status === 'held') {
-        await client.callTool('cancel_booking', { booking_id: current.booking.record.booking_id });
+      if (current.current?.booking.status === 'held') {
+        await client.callTool('cancel_booking', { booking_id: current.current.booking.booking_id });
       }
       dispatch({ type: 'search_started', search: input, assumed });
       const out = await client.callTool('search_availability', input);
-      if (!out.ok) {
-        dispatch({ type: 'failed', message: out.error.message });
-        return say(replies.failed(out.error.message));
-      }
+      if (!out.ok) return fail(out.error);
       const results = Array.isArray(out.data.results) ? out.data.results : [];
       dispatch({ type: 'search_succeeded', results });
       say(replies.results(results, input));
     }
 
-    async function hold(result: SearchResult) {
+    async function hold(slot: Availability) {
       const current = stateRef.current;
       if (current.busy) return say(replies.BUSY);
-      lastStep.current = () => hold(result);
-      const partySize = current.search?.party_size ?? 2;
+      lastStep.current = () => hold(slot);
       const guestNow = guestRef.current;
       dispatch({ type: 'started', task: 'hold' });
       const out = await client.callTool('create_booking_hold', {
-        listing_id: result.listing_id,
-        start_time: result.start_time,
-        end_time: result.end_time,
+        availability_id: slot.availability_id,
         guest_name: guestNow.guest_name,
         guest_contact: guestNow.guest_contact,
-        party_size: partySize,
+        party_size: slot.party_size,
       });
-      if (!out.ok) return settleFailure('hold', out.error, result, current.search);
-      dispatch({ type: 'held', booking: { record: out.data, slot: result, partySize, guest: guestNow } });
-      say(replies.held(out.data, result));
+      if (!out.ok) return settle('hold', out.error);
+      dispatch({ type: 'held', result: out.data, slot });
+      say(replies.held(out.data));
     }
 
     async function confirm() {
       const current = stateRef.current;
-      const booking = current.booking;
+      const booking = current.current?.booking;
       if (!booking || !canConfirm(current)) {
         if (current.busy) return say(replies.BUSY);
-        if (booking?.record.status === 'confirmed') return say(replies.ALREADY_CONFIRMED);
-        if (booking?.record.status === 'expired') return say(replies.expired(booking.slot));
+        if (booking?.status === 'confirmed') return say(replies.ALREADY_CONFIRMED);
+        if (booking?.status === 'expired') return say(replies.expired(current.current!.slot.name));
         return say(replies.NOTHING_TO_CONFIRM);
       }
       lastStep.current = confirm;
       dispatch({ type: 'started', task: 'confirm' });
-      const out = await client.callTool('confirm_booking', { booking_id: booking.record.booking_id });
-      if (!out.ok) return settleFailure('confirm', out.error, booking.slot, current.search);
-      dispatch({ type: 'confirmed', record: out.data });
+      // Only ever sent from the guest's own yes or Confirm click.
+      const out = await client.callTool('confirm_booking', { booking_id: booking.booking_id, user_confirmed: true });
+      if (!out.ok) return settle('confirm', out.error);
+      dispatch({ type: 'confirmed', result: out.data });
       say(out.data.summary);
+    }
+
+    async function cancelBooking(released: boolean) {
+      const booking = stateRef.current.current!.booking;
+      lastStep.current = released ? release : cancel;
+      dispatch({ type: 'started', task: 'cancel' });
+      const out = await client.callTool('cancel_booking', { booking_id: booking.booking_id });
+      if (!out.ok) return fail(out.error);
+      dispatch({ type: 'cancelled', result: out.data });
+      say(released ? replies.RELEASED : out.data.summary);
     }
 
     async function release() {
       const current = stateRef.current;
-      const booking = current.booking;
       if (current.busy) return say(replies.BUSY);
-      if (!booking || current.view !== 'held') return say(replies.NOTHING_TO_CONFIRM);
-      lastStep.current = release;
-      dispatch({ type: 'started', task: 'cancel' });
-      const out = await client.callTool('cancel_booking', { booking_id: booking.record.booking_id });
-      if (!out.ok) {
-        dispatch({ type: 'failed', message: out.error.message });
-        return say(replies.failed(out.error.message));
-      }
-      dispatch({ type: 'cancelled', record: out.data });
-      say(replies.RELEASED);
+      if (current.view !== 'held' || current.current?.booking.status !== 'held') return say(replies.NOTHING_TO_CONFIRM);
+      await cancelBooking(true);
     }
 
     async function cancel() {
       const current = stateRef.current;
-      const booking = current.booking;
       if (current.busy) return say(replies.BUSY);
-      if (booking?.record.status === 'held') return release();
-      if (booking?.record.status !== 'confirmed') return say(replies.NO_BOOKING);
-      lastStep.current = cancel;
-      dispatch({ type: 'started', task: 'cancel' });
-      const out = await client.callTool('cancel_booking', { booking_id: booking.record.booking_id });
-      if (!out.ok) {
-        dispatch({ type: 'failed', message: out.error.message });
-        return say(replies.failed(out.error.message));
-      }
-      dispatch({ type: 'cancelled', record: out.data });
-      say(out.data.summary);
+      const status = current.current?.booking.status;
+      if (status === 'held') return release();
+      if (status !== 'confirmed') return say(replies.NO_BOOKING);
+      await cancelBooking(false);
     }
 
+    /**
+     * A new time means searching again and passing the matching availability_id, as the
+     * contract asks; a new party size alone goes straight to modify_booking.
+     */
     async function modify(change: Change) {
       const current = stateRef.current;
-      const booking = current.booking;
+      const active = current.current;
       if (current.busy) return say(replies.BUSY);
-      if (!booking || (booking.record.status !== 'confirmed' && booking.record.status !== 'held')) {
+      if (!active || (active.booking.status !== 'confirmed' && active.booking.status !== 'held')) {
         return say(replies.NO_BOOKING);
       }
-      const was = splitIso(booking.slot.start_time);
+      const { booking, slot } = active;
+      const was = splitIso(booking.start_time);
       const date = change.date ?? was.date;
       const time = change.time ?? was.time;
-      const start = toIsoDateTime(date, time);
-      const end = addMinutes(start, minutesBetween(booking.slot.start_time, booking.slot.end_time));
-      const partySize = change.partySize ?? booking.partySize;
-      const args: ModifyBookingInput = { booking_id: booking.record.booking_id };
-      if (start !== booking.slot.start_time) Object.assign(args, { start_time: start, end_time: end });
-      if (partySize !== booking.partySize) args.party_size = partySize;
-      if (Object.keys(args).length === 1) return say(replies.NO_CHANGE);
+      const partySize = change.partySize ?? booking.party_size;
+      const moving = !sameInstant(toIsoDateTime(date, time), booking.start_time);
+      if (!moving && partySize === booking.party_size) return say(replies.NO_CHANGE);
 
       lastStep.current = () => modify(change);
       dispatch({ type: 'started', task: 'modify' });
-      const out = await client.callTool('modify_booking', args);
-      if (!out.ok) {
-        const base = current.search ?? null;
-        const searchInput = base && { ...base, date, time, party_size: partySize };
-        return settleFailure('modify', out.error, booking.slot, searchInput);
+      const args: ModifyBookingInput = { booking_id: booking.booking_id };
+      if (partySize !== booking.party_size) args.party_size = partySize;
+      let target = slot;
+      if (moving) {
+        const found = await client.callTool('search_availability', {
+          provider_type: booking.provider_type,
+          location: slot.location,
+          date,
+          time,
+          party_size: partySize,
+          service_type: booking.service_type,
+          room_type: booking.room_type,
+          preferences: [],
+        });
+        if (!found.ok) return fail(found.error);
+        const samePlace = found.data.results.filter((result) => result.listing_id === booking.listing_id);
+        const match = samePlace.find((result) => sameInstant(result.start_time, toIsoDateTime(date, time)));
+        if (!match) {
+          const alternatives = samePlace.filter((result) => result.availability_id !== booking.availability_id).slice(0, 2);
+          const message = replies.notFreeThen(slot.name, time);
+          dispatch({ type: 'conflict', conflict: { message, during: 'modify', alternatives } });
+          return say(replies.conflict(message, alternatives));
+        }
+        args.new_availability_id = match.availability_id;
+        target = match;
       }
-      dispatch({
-        type: 'modified',
-        record: out.data,
-        slot: { ...booking.slot, start_time: start, end_time: end },
-        partySize,
-      });
-      say(out.data.summary);
+      const out = await client.callTool('modify_booking', args);
+      if (!out.ok) return settle('modify', out.error);
+      dispatch({ type: 'modified', result: out.data, slot: { ...target, party_size: out.data.booking.party_size } });
+      say(replies.changed(out.data));
     }
 
     async function showDetails(listingId: string) {
       if (stateRef.current.busy) return say(replies.BUSY);
       dispatch({ type: 'details_started', listingId });
       const out = await client.callTool('get_listing_details', { listing_id: listingId });
-      if (!out.ok) {
-        dispatch({ type: 'failed', message: out.error.message });
-        return say(replies.failed(out.error.message));
-      }
-      dispatch({ type: 'details_loaded', listingId, data: out.data });
+      if (!out.ok) return fail(out.error);
+      dispatch({ type: 'details_loaded', listingId, listing: out.data.listing });
+    }
+
+    /** The countdown reached zero: ask the server for the booking, which applies the expiry. */
+    async function expire() {
+      const active = stateRef.current.current;
+      if (active?.booking.status !== 'held' || expiredIds.current.has(active.booking.booking_id)) return;
+      expiredIds.current.add(active.booking.booking_id);
+      const out = await client.callTool('get_booking', { booking_id: active.booking.booking_id });
+      if (out.ok && out.data.booking.status !== 'held') dispatch({ type: 'synced', result: out.data });
+      else dispatch({ type: 'hold_expired' });
+      say(replies.expired(active.slot.name));
+    }
+
+    function choose(index: number | null, time?: string) {
+      const current = stateRef.current;
+      const places = groupByPlace(current.view === 'results' ? current.results : []);
+      if (index !== null && !places[index]) return say(replies.noSuchOption(places.length));
+      const candidates = index !== null ? places[index].slots : places.flatMap((place) => place.slots);
+      const slot = time ? candidates.find((result) => splitIso(result.start_time).time === time) : candidates[0];
+      if (!slot) return say(replies.noSuchTime(time ?? ''));
+      void hold(slot);
     }
 
     function send(text: string) {
       const current = stateRef.current;
       add('user', text);
       if (current.busy) return say(replies.BUSY);
-      const showingResults = current.view === 'results' ? current.results : [];
+      const places = groupByPlace(current.view === 'results' ? current.results : []);
       const intent = understand(text, {
         now: nowRef.current(),
-        resultNames: showingResults.map((result) => result.name),
-        hasHold: current.view === 'held' && current.booking?.record.status === 'held',
-        hasBooking: current.booking?.record.status === 'confirmed',
-        holdExpired: current.view === 'held' && current.booking?.record.status === 'expired',
+        resultNames: places.map((place) => place.name),
+        hasHold: current.view === 'held' && current.current?.booking.status === 'held',
+        hasBooking: current.current?.booking.status === 'confirmed',
+        holdExpired: current.view === 'held' && current.current?.booking.status === 'expired',
       });
       switch (intent.kind) {
         case 'search': {
@@ -253,10 +270,11 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
           return;
         }
         case 'choose':
+          return choose(intent.index, intent.time);
         case 'details': {
-          const result = showingResults[intent.index];
-          if (!result) return say(replies.noSuchOption(showingResults.length));
-          void (intent.kind === 'choose' ? hold(result) : showDetails(result.listing_id));
+          const place = places[intent.index];
+          if (!place) return say(replies.noSuchOption(places.length));
+          void showDetails(place.listing_id);
           return;
         }
         case 'confirm':
@@ -294,21 +312,15 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
         const { search: last, assumed } = stateRef.current;
         if (last) await search(last, assumed);
       },
-      chooseAlternative: async (result: SearchResult) => {
+      chooseAlternative: async (slot: Availability) => {
         if (stateRef.current.conflict?.during === 'modify') {
-          const { date, time } = splitIso(result.start_time);
+          const { date, time } = splitIso(slot.start_time);
           await modify({ date, time });
         } else {
-          await hold(result);
+          await hold(slot);
         }
       },
-      expire: () => {
-        const booking = stateRef.current.booking;
-        if (booking?.record.status !== 'held' || expiredIds.current.has(booking.record.booking_id)) return;
-        expiredIds.current.add(booking.record.booking_id);
-        dispatch({ type: 'hold_expired' });
-        say(replies.expired(booking.slot));
-      },
+      expire: () => void expire(),
       closeDetails: () => dispatch({ type: 'details_closed' }),
       showBooking: () => dispatch({ type: 'booking_shown' }),
       startOver: () => dispatch({ type: 'reset' }),

@@ -1,4 +1,4 @@
-import type { Booking, ListingDetails, ProviderType, SearchAvailabilityInput, SearchResult } from '../contract/types';
+import type { Availability, Booking, BookingResult, Listing, ProviderType, SearchAvailabilityInput } from '../contract/types';
 
 // The booking steps as one reducer: what is on screen, what is in flight, and what went wrong.
 // Confirming is only possible from a live hold, never straight from a search.
@@ -12,32 +12,32 @@ export interface Guest {
 }
 
 export interface CurrentBooking {
-  record: Booking;
-  /** The chosen result, with its times updated after any change. */
-  slot: SearchResult;
-  partySize: number;
-  guest: Guest;
+  /** As the server last returned it. */
+  booking: Booking;
+  summary: string;
+  /** The search result it came from, for the place's name, location and price. */
+  slot: Availability;
 }
 
 export interface Conflict {
   message: string;
-  /** What was being done when the slot turned out to be gone. */
+  /** What was being done when the option turned out to be unavailable. */
   during: 'hold' | 'confirm' | 'modify';
-  alternatives: SearchResult[];
+  alternatives: Availability[];
 }
 
 export interface FlowState {
   provider: ProviderType;
   search: SearchAvailabilityInput | null;
   assumed: Array<keyof SearchAvailabilityInput>;
-  results: SearchResult[];
-  booking: CurrentBooking | null;
+  results: Availability[];
+  current: CurrentBooking | null;
   view: View;
   busy: Task | null;
   conflict: Conflict | null;
   error: { message: string; during: Task } | null;
-  /** Open listing details; data is null while loading. */
-  details: { listingId: string; data: ListingDetails | null } | null;
+  /** Open listing details; listing is null while loading. */
+  details: { listingId: string; listing: Listing | null } | null;
 }
 
 export type FlowEvent =
@@ -45,15 +45,16 @@ export type FlowEvent =
   | { type: 'started'; task: 'hold' | 'confirm' | 'modify' | 'cancel' }
   | { type: 'search_started'; search: SearchAvailabilityInput; assumed: Array<keyof SearchAvailabilityInput> }
   | { type: 'details_started'; listingId: string }
-  | { type: 'search_succeeded'; results: SearchResult[] }
-  | { type: 'held'; booking: CurrentBooking }
-  | { type: 'confirmed'; record: Booking }
-  | { type: 'modified'; record: Booking; slot: SearchResult; partySize: number }
-  | { type: 'cancelled'; record: Booking }
+  | { type: 'search_succeeded'; results: Availability[] }
+  | { type: 'held'; result: BookingResult; slot: Availability }
+  | { type: 'confirmed'; result: BookingResult }
+  | { type: 'modified'; result: BookingResult; slot: Availability }
+  | { type: 'cancelled'; result: BookingResult }
+  | { type: 'synced'; result: BookingResult }
   | { type: 'hold_expired' }
   | { type: 'conflict'; conflict: Conflict }
   | { type: 'failed'; message: string }
-  | { type: 'details_loaded'; listingId: string; data: ListingDetails }
+  | { type: 'details_loaded'; listingId: string; listing: Listing }
   | { type: 'details_closed' }
   | { type: 'booking_shown' }
   | { type: 'error_dismissed' }
@@ -65,7 +66,7 @@ export function initialFlow(provider: ProviderType = 'restaurant'): FlowState {
     search: null,
     assumed: [],
     results: [],
-    booking: null,
+    current: null,
     view: 'empty',
     busy: null,
     conflict: null,
@@ -75,15 +76,21 @@ export function initialFlow(provider: ProviderType = 'restaurant'): FlowState {
 }
 
 export function canConfirm(state: FlowState): boolean {
-  return state.view === 'held' && state.booking?.record.status === 'held' && state.busy === null;
+  return state.view === 'held' && state.current?.booking.status === 'held' && state.busy === null;
 }
+
+const withResult = (current: CurrentBooking, result: BookingResult, slot = current.slot): CurrentBooking => ({
+  booking: result.booking,
+  summary: result.summary,
+  slot,
+});
 
 export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
   switch (event.type) {
     case 'provider_changed':
       if (state.busy || event.provider === state.provider) return state;
       if (state.view === 'results' || state.view === 'empty') {
-        return { ...initialFlow(event.provider), booking: state.booking };
+        return { ...initialFlow(event.provider), current: state.current };
       }
       return { ...state, provider: event.provider };
 
@@ -94,7 +101,7 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
 
     case 'details_started':
       if (state.busy) return state;
-      return { ...state, busy: 'details', error: null, details: { listingId: event.listingId, data: null } };
+      return { ...state, busy: 'details', error: null, details: { listingId: event.listingId, listing: null } };
 
     case 'search_started':
       if (state.busy) return state;
@@ -116,48 +123,57 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
         results: event.results,
         busy: null,
         view: 'results',
-        booking: state.booking?.record.status === 'confirmed' ? state.booking : null,
+        current: state.current?.booking.status === 'confirmed' ? state.current : null,
       };
 
     case 'held':
-      return { ...state, booking: event.booking, view: 'held', busy: null, conflict: null };
-
-    case 'confirmed':
-      if (!state.booking) return state;
-      return { ...state, booking: { ...state.booking, record: event.record }, view: 'confirmed', busy: null };
-
-    case 'modified':
-      if (!state.booking) return state;
       return {
         ...state,
-        booking: { ...state.booking, record: event.record, slot: event.slot, partySize: event.partySize },
+        current: { booking: event.result.booking, summary: event.result.summary, slot: event.slot },
+        view: 'held',
         busy: null,
         conflict: null,
       };
 
+    case 'confirmed':
+      if (!state.current) return state;
+      return { ...state, current: withResult(state.current, event.result), view: 'confirmed', busy: null };
+
+    case 'modified':
+      if (!state.current) return state;
+      return { ...state, current: withResult(state.current, event.result, event.slot), busy: null, conflict: null };
+
     case 'cancelled': {
-      if (!state.booking) return state;
+      if (!state.current) return state;
       // Releasing a hold goes back to the results; cancelling a confirmed booking shows it cancelled.
       if (state.view === 'held') {
-        return { ...state, booking: null, view: state.results.length > 0 ? 'results' : 'empty', busy: null };
+        return { ...state, current: null, view: state.results.length > 0 ? 'results' : 'empty', busy: null };
       }
-      return { ...state, booking: { ...state.booking, record: event.record }, view: 'cancelled', busy: null };
+      return { ...state, current: withResult(state.current, event.result), view: 'cancelled', busy: null };
     }
 
+    case 'synced':
+      if (!state.current) return state;
+      return { ...state, current: withResult(state.current, event.result) };
+
     case 'hold_expired':
-      if (state.booking?.record.status !== 'held') return state;
-      return { ...state, booking: { ...state.booking, record: { ...state.booking.record, status: 'expired' } } };
+      if (state.current?.booking.status !== 'held') return state;
+      return {
+        ...state,
+        busy: null,
+        current: { ...state.current, booking: { ...state.current.booking, status: 'expired', expires_at: null } },
+      };
 
     case 'conflict': {
-      const { during } = event.conflict;
-      const lostHold = during === 'confirm';
+      const { during, alternatives } = event.conflict;
+      if (during === 'modify') return { ...state, busy: null, conflict: event.conflict };
       return {
         ...state,
         busy: null,
         conflict: event.conflict,
-        booking: lostHold ? null : state.booking,
-        view: during === 'modify' ? state.view : 'results',
-        results: during === 'modify' ? state.results : event.conflict.alternatives,
+        current: during === 'confirm' ? null : state.current,
+        view: 'results',
+        results: alternatives.length > 0 ? alternatives : state.results,
       };
     }
 
@@ -165,13 +181,13 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
       return { ...state, busy: null, error: { message: event.message, during: state.busy ?? 'search' }, details: null };
 
     case 'details_loaded':
-      return { ...state, busy: null, details: { listingId: event.listingId, data: event.data } };
+      return { ...state, busy: null, details: { listingId: event.listingId, listing: event.listing } };
 
     case 'details_closed':
       return { ...state, details: null };
 
     case 'booking_shown':
-      if (state.booking?.record.status !== 'confirmed') return state;
+      if (state.current?.booking.status !== 'confirmed') return state;
       return { ...state, view: 'confirmed', details: null };
 
     case 'error_dismissed':

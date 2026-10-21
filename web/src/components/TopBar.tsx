@@ -1,6 +1,6 @@
 import { PROVIDER_TYPES, type ProviderType } from '../contract/types';
 import { speechAvailable } from '../hooks/useSpeech';
-import type { ConnectionState } from '../mcp/types';
+import type { ClientMode, ConnectionState } from '../mcp/types';
 import { IconSpeaker, ProviderIcon } from './icons';
 
 const PROVIDER_LABELS: Record<ProviderType, string> = { restaurant: 'Restaurant', salon: 'Salon', hotel: 'Hotel' };
@@ -10,11 +10,23 @@ interface TopBarProps {
   onProvider(provider: ProviderType): void;
   locked: boolean;
   connection: ConnectionState;
+  /** The live server's MCP address, or null in demo mode. */
+  endpoint: string | null;
+  onSwitchMode(mode: ClientMode): void;
   readAloud: boolean;
   onReadAloud(on: boolean): void;
 }
 
-export function TopBar({ provider, onProvider, locked, connection, readAloud, onReadAloud }: TopBarProps) {
+export function TopBar({
+  provider,
+  onProvider,
+  locked,
+  connection,
+  endpoint,
+  onSwitchMode,
+  readAloud,
+  onReadAloud,
+}: TopBarProps) {
   return (
     <header className="topbar">
       <div className="brand">
@@ -37,7 +49,14 @@ export function TopBar({ provider, onProvider, locked, connection, readAloud, on
             Read replies aloud
           </button>
         )}
-        <ConnectionStatus connection={connection} />
+        <ConnectionStatus connection={connection} endpoint={endpoint} />
+        <button
+          type="button"
+          className="btn ghost small"
+          onClick={() => onSwitchMode(connection.mode === 'demo' ? 'live' : 'demo')}
+        >
+          {connection.mode === 'demo' ? 'Use live server' : 'Use demo data'}
+        </button>
       </div>
     </header>
   );
@@ -71,10 +90,10 @@ export function ProviderSwitch({
   );
 }
 
-export function ConnectionStatus({ connection }: { connection: ConnectionState }) {
+export function ConnectionStatus({ connection, endpoint }: { connection: ConnectionState; endpoint: string | null }) {
   if (connection.status === 'connecting') {
     return (
-      <span className="connection" data-tone="pending" role="status">
+      <span className="connection" data-tone="pending" role="status" title={endpoint ?? undefined}>
         <span className="dot" aria-hidden="true" /> Connecting…
       </span>
     );
@@ -99,7 +118,7 @@ export function ConnectionStatus({ connection }: { connection: ConnectionState }
     );
   }
   return (
-    <span className="connection" data-tone="live" role="status">
+    <span className="connection" data-tone="live" role="status" title={endpoint ?? undefined}>
       <span className="dot" aria-hidden="true" /> Live server · MCP {connection.info?.protocolVersion}
     </span>
   );

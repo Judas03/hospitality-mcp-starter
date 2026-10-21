@@ -8,7 +8,8 @@ export type SearchFields = Partial<SearchAvailabilityInput>;
 
 export type Intent =
   | { kind: 'search'; fields: SearchFields }
-  | { kind: 'choose'; index: number }
+  /** A place by position or name, a start time, or both. */
+  | { kind: 'choose'; index: number | null; time?: string }
   | { kind: 'details'; index: number }
   | { kind: 'confirm' }
   | { kind: 'decline' }
@@ -20,7 +21,7 @@ export type Intent =
 
 export interface Situation {
   now: Date;
-  /** Names of the results on screen, in order. */
+  /** Names of the places on screen, in order. */
   resultNames: string[];
   /** A hold is waiting for a yes or no. */
   hasHold: boolean;
@@ -150,21 +151,23 @@ export function parseLocation(text: string): string | null {
   return null;
 }
 
-/** Wish words -> the preference strings sent to search_availability. */
+// Wish words -> the feature names the backend's listings use. Every wish must match a feature,
+// so wishes outside this list are still sent and simply find nothing.
 const PREFERENCES: Array<[RegExp, string]> = [
   [/\b(quiet|peaceful|calm)\b/, 'quiet'],
-  [/\b(outdoors?|outside|terrace|al fresco)\b/, 'outdoor'],
-  [/\bgarden\b/, 'garden'],
+  [/\b(outdoors?|outside|terrace|al fresco)\b/, 'outdoor seating'],
+  [/\b(indoors?|inside)\b/, 'indoor seating'],
   [/\b(river ?view|riverside|by the river|on the river)\b/, 'river view'],
-  [/\bromantic\b/, 'romantic'],
-  [/\b(kids?|children|family[- ]friendly)\b/, 'family'],
-  [/\b(vegetarian|vegan|veggie)\b/, 'vegetarian'],
-  [/\bprivate room\b/, 'private room'],
-  [/\brooftop\b/, 'rooftop'],
-  [/\bpool\b/, 'pool'],
+  [/\bthai (food|cuisine)\b/, 'thai cuisine'],
+  [/\b(lively|buzzy)\b/, 'lively'],
+  [/\b(accessible|wheelchair)\b/, 'accessible'],
+  [/\bmodern\b/, 'modern'],
+  [/\b(near (the )?(transit|bts|mrt|skytrain|station))\b/, 'near transit'],
   [/\bbreakfast\b/, 'breakfast'],
-  [/\blate[- ]night\b/, 'late night'],
-  [/\bhistoric\b/, 'historic'],
+  [/\b(historic|old town)\b/, 'historic district'],
+  [/\bgarden\b/, 'garden'],
+  [/\bromantic\b/, 'romantic'],
+  [/\bpool\b/, 'pool'],
 ];
 
 export function parsePreferences(text: string): string[] {
@@ -188,10 +191,9 @@ export function parseService(text: string): string | null {
   return SERVICES.find(([pattern]) => pattern.test(t))?.[1] ?? null;
 }
 
+/** The backend's room types. Bed words like "double" mean any room, so they set nothing. */
 export function parseRoom(text: string): string | null {
-  const match = text.toLowerCase().match(/\b(single|double|twin|suite|family|king|queen)\b/);
-  if (!match) return null;
-  return match[1] === 'king' || match[1] === 'queen' ? 'double' : match[1];
+  return text.toLowerCase().match(/\b(standard|deluxe|suite)\b/)?.[1] ?? null;
 }
 
 const ORDINALS: Array<[RegExp, number]> = [
@@ -277,19 +279,24 @@ export function understand(text: string, situation: Situation): Intent {
     if (date || time || partySize) return { kind: 'modify', date, time, partySize };
   }
 
-  const index = pickResult(t, situation.resultNames);
-  if (index !== null) {
-    if (/\b(details?|more about|tell me|what is|what's|info)\b/.test(t)) return { kind: 'details', index };
-    if (/\b(hold|book|take|reserve|choose|pick|go with|want|get|that one|this one)\b/.test(t) || t.split(' ').length <= 4) {
-      return { kind: 'choose', index };
+  if (situation.resultNames.length > 0) {
+    const index = pickResult(t, situation.resultNames);
+    const time = parseTime(t) ?? undefined;
+    if (/\b(details?|more about|tell me|what is|what's|info)\b/.test(t)) {
+      // With a single place on screen, "tell me more about it" can only mean that one.
+      const target = index ?? (situation.resultNames.length === 1 ? 0 : null);
+      if (target !== null) return { kind: 'details', index: target };
     }
+    const picking = /\b(hold|book|take|reserve|choose|pick|go with|want|get|that one|this one)\b/.test(t) || t.split(' ').length <= 4;
+    if ((index !== null || time) && picking) return time ? { kind: 'choose', index, time } : { kind: 'choose', index };
   }
 
   const fields = searchFields(text, situation.now);
   return Object.keys(fields).length > 0 ? { kind: 'search', fields } : { kind: 'unknown' };
 }
 
-export const DEFAULT_TIMES: Record<ProviderType, string> = { restaurant: '19:00', salon: '11:00', hotel: '14:00' };
+/** Assumed times that fall inside the backend's opening hours (hotels: check-in). */
+export const DEFAULT_TIMES: Record<ProviderType, string> = { restaurant: '19:00', salon: '13:00', hotel: '15:00' };
 export const DEFAULT_LOCATION = 'Bangkok';
 
 /** Fill what the guest did not say, and list those fields as assumed. */

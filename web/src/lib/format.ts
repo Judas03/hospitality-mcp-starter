@@ -1,6 +1,6 @@
-import type { ProviderType, SearchResult } from '../contract/types';
+import type { Availability, ProviderType } from '../contract/types';
 
-export function priceLabel(result: SearchResult): string {
+export function priceLabel(result: Availability): string {
   if (result.price === 0) return 'Free to book';
   let amount: string;
   try {
@@ -15,21 +15,15 @@ export function priceLabel(result: SearchResult): string {
   return result.provider_type === 'hotel' ? `${amount} / night` : amount;
 }
 
+/** "2 hours", "45 min" */
+export function durationLabel(start: string, end: string): string {
+  const minutes = Math.round((Date.parse(end) - Date.parse(start)) / 60_000);
+  if (minutes >= 120 && minutes % 60 === 0) return `${minutes / 60} hours`;
+  if (minutes === 60) return '1 hour';
+  return `${minutes} min`;
+}
+
 export function partyLabel(size: number, provider: ProviderType): string {
   if (provider === 'hotel') return size === 1 ? '1 guest' : `${size} guests`;
   return size === 1 ? '1 person' : `${size} people`;
-}
-
-/** "max_party_size" -> "Max party size" */
-export function humanizeKey(key: string): string {
-  const words = key.replace(/_/g, ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-/** A readable form of any JSON value, for fields the contract does not describe. */
-export function displayValue(value: unknown): string {
-  if (value === null || value === undefined) return '—';
-  if (Array.isArray(value)) return value.map(displayValue).join(', ');
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
 }

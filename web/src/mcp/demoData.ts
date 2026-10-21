@@ -1,166 +1,144 @@
-import type { ProviderType } from '../contract/types';
+import type { Listing } from '../contract/types';
 
-/** A sample business for demo mode. Only the demo client reads these extra fields. */
-export interface DemoListing {
+// A copy of the backend's seed inventory (server/repository.py on backend-codex), so demo
+// mode shows the same places, times and prices as the live server. Keep the two in step.
+
+export interface DemoTemplate {
+  template_id: string;
   listing_id: string;
-  name: string;
-  provider_type: ProviderType;
-  location: string;
-  area: string;
-  description: string;
-  /** Matched against the search's preferences, lower case. */
-  features: string[];
-  max_party: number;
-  /** HH:MM opening hours; for hotels, opens is the earliest check-in. */
-  opens: string;
-  closes: string;
-  /** Salon menu: service -> length and price. */
-  services?: Record<string, { minutes: number; price: number }>;
-  /** Hotel rooms: room type -> price per night. */
-  rooms?: Record<string, number>;
+  /** HH:MM local start time, repeated every day. */
+  local_start: string;
+  duration_minutes: number;
+  max_party_size: number;
+  service_type: string | null;
+  room_type: string | null;
+  price: number;
+  currency: string;
 }
 
-export const RESTAURANT_TABLE_MINUTES = 120;
-export const HOTEL_CHECK_OUT = '12:00';
-export const CURRENCY = 'THB';
+/** How far from the asked-for time a slot may start and still be offered. */
+export const SEARCH_WINDOW_MINUTES = 180;
+export const MAX_RESULTS = 10;
+export const HOLD_SECONDS = 300;
 
-export const DEMO_LISTINGS: DemoListing[] = [
+export const DEMO_LISTINGS: Listing[] = [
   {
     listing_id: 'rest_001',
-    name: 'Baan Suan Garden Kitchen',
+    name: 'Siam Serenity',
     provider_type: 'restaurant',
     location: 'Bangkok',
-    area: 'Ari',
-    description: 'Thai home cooking in a leafy courtyard, away from the traffic.',
-    features: ['quiet', 'garden', 'outdoor', 'vegetarian'],
-    max_party: 8,
-    opens: '11:00',
-    closes: '22:30',
+    timezone: 'Asia/Bangkok',
+    description: 'A calm Thai dining room designed for quiet dinners.',
+    features: ['quiet', 'indoor seating', 'thai cuisine'],
+    service_types: [],
+    room_types: [],
   },
   {
     listing_id: 'rest_002',
-    name: 'Chao Phraya Terrace',
+    name: 'Riverside Social',
     provider_type: 'restaurant',
     location: 'Bangkok',
-    area: 'Riverside',
-    description: 'Grilled seafood on an open terrace over the river.',
-    features: ['river view', 'outdoor', 'romantic'],
-    max_party: 6,
-    opens: '17:00',
-    closes: '23:30',
-  },
-  {
-    listing_id: 'rest_003',
-    name: 'Silom Quiet Room',
-    provider_type: 'restaurant',
-    location: 'Bangkok',
-    area: 'Silom',
-    description: 'A small tasting-menu dining room with widely spaced tables.',
-    features: ['quiet', 'romantic', 'private room'],
-    max_party: 4,
-    opens: '18:00',
-    closes: '23:00',
-  },
-  {
-    listing_id: 'rest_004',
-    name: 'Soi 38 Noodle House',
-    provider_type: 'restaurant',
-    location: 'Bangkok',
-    area: 'Thong Lo',
-    description: 'A busy, casual noodle bar that welcomes big groups.',
-    features: ['family', 'casual', 'late night'],
-    max_party: 10,
-    opens: '10:00',
-    closes: '23:30',
+    timezone: 'Asia/Bangkok',
+    description: 'A lively riverside restaurant with group seating.',
+    features: ['river view', 'lively', 'outdoor seating'],
+    service_types: [],
+    room_types: [],
   },
   {
     listing_id: 'salon_001',
-    name: 'Lumpini Hair Studio',
+    name: 'Lotus Glow Salon',
     provider_type: 'salon',
     location: 'Bangkok',
-    area: 'Lumpini',
-    description: 'Cuts and colour by senior stylists in a calm studio.',
-    features: ['quiet'],
-    max_party: 2,
-    opens: '10:00',
-    closes: '20:00',
-    services: {
-      haircut: { minutes: 60, price: 600 },
-      'hair colour': { minutes: 120, price: 2200 },
-      'blow dry': { minutes: 45, price: 450 },
-    },
+    timezone: 'Asia/Bangkok',
+    description: 'A neighborhood salon offering hair and nail appointments.',
+    features: ['quiet', 'accessible'],
+    service_types: ['haircut', 'manicure'],
+    room_types: [],
   },
   {
     listing_id: 'salon_002',
-    name: 'Orchid Nail & Spa',
+    name: 'Sukhumvit Style Studio',
     provider_type: 'salon',
     location: 'Bangkok',
-    area: 'Sukhumvit',
-    description: 'Nails, massage and facials, with side-by-side chairs for friends.',
-    features: ['quiet', 'couples'],
-    max_party: 3,
-    opens: '10:00',
-    closes: '21:00',
-    services: {
-      manicure: { minutes: 45, price: 400 },
-      pedicure: { minutes: 60, price: 550 },
-      massage: { minutes: 60, price: 800 },
-      facial: { minutes: 60, price: 1200 },
-    },
-  },
-  {
-    listing_id: 'salon_003',
-    name: 'Ari Barber Club',
-    provider_type: 'salon',
-    location: 'Bangkok',
-    area: 'Ari',
-    description: 'A neighbourhood barber with quick, booked slots.',
-    features: ['quick'],
-    max_party: 2,
-    opens: '09:00',
-    closes: '20:00',
-    services: {
-      haircut: { minutes: 45, price: 350 },
-      'beard trim': { minutes: 30, price: 250 },
-    },
+    timezone: 'Asia/Bangkok',
+    description: 'A modern salon specializing in styling and manicures.',
+    features: ['modern', 'near transit'],
+    service_types: ['haircut', 'manicure'],
+    room_types: [],
   },
   {
     listing_id: 'hotel_001',
-    name: 'Riverside Residence Bangkok',
+    name: 'Chao Phraya Stay',
     provider_type: 'hotel',
     location: 'Bangkok',
-    area: 'Riverside',
-    description: 'Rooms over the river with a rooftop pool.',
-    features: ['river view', 'pool', 'breakfast'],
-    max_party: 4,
-    opens: '14:00',
-    closes: '23:59',
-    rooms: { double: 2400, twin: 2400, suite: 5200 },
+    timezone: 'Asia/Bangkok',
+    description: 'A compact riverside hotel with one-night demo inventory.',
+    features: ['river view', 'breakfast'],
+    service_types: [],
+    room_types: ['standard', 'deluxe'],
   },
   {
     listing_id: 'hotel_002',
-    name: 'Sukhumvit Garden Hotel',
+    name: 'Old Town House',
     provider_type: 'hotel',
     location: 'Bangkok',
-    area: 'Sukhumvit',
-    description: 'A low-rise hotel around a quiet garden and pool.',
-    features: ['quiet', 'garden', 'pool', 'family'],
-    max_party: 5,
-    opens: '14:00',
-    closes: '23:59',
-    rooms: { double: 1800, family: 3200 },
+    timezone: 'Asia/Bangkok',
+    description: "A small hotel near Bangkok's historic district.",
+    features: ['quiet', 'historic district'],
+    service_types: [],
+    room_types: ['standard', 'suite'],
   },
-  {
-    listing_id: 'hotel_003',
-    name: 'Old Town Boutique Stay',
-    provider_type: 'hotel',
-    location: 'Bangkok',
-    area: 'Rattanakosin',
-    description: 'A restored shophouse near the Grand Palace.',
-    features: ['quiet', 'historic', 'breakfast'],
-    max_party: 2,
-    opens: '14:00',
-    closes: '23:59',
-    rooms: { single: 1300, double: 2100 },
-  },
+];
+
+function restaurantTemplates(listingId: string, capacity: number): DemoTemplate[] {
+  return ['18:00', '18:30', '19:00', '19:30', '20:00'].map((start) => ({
+    template_id: `${listingId}_${start.replace(':', '')}`,
+    listing_id: listingId,
+    local_start: start,
+    duration_minutes: 120,
+    max_party_size: capacity,
+    service_type: null,
+    room_type: null,
+    price: 0,
+    currency: 'THB',
+  }));
+}
+
+function template(
+  template_id: string,
+  listing_id: string,
+  local_start: string,
+  duration_minutes: number,
+  max_party_size: number,
+  service_type: string | null,
+  room_type: string | null,
+  price: number,
+): DemoTemplate {
+  return {
+    template_id,
+    listing_id,
+    local_start,
+    duration_minutes,
+    max_party_size,
+    service_type,
+    room_type,
+    price,
+    currency: 'THB',
+  };
+}
+
+export const DEMO_TEMPLATES: DemoTemplate[] = [
+  ...restaurantTemplates('rest_001', 4),
+  ...restaurantTemplates('rest_002', 6),
+  template('salon_001_1000_haircut', 'salon_001', '10:00', 60, 1, 'haircut', null, 700),
+  template('salon_001_1300_haircut', 'salon_001', '13:00', 60, 1, 'haircut', null, 700),
+  template('salon_001_1600_haircut', 'salon_001', '16:00', 60, 1, 'haircut', null, 700),
+  template('salon_001_1100_manicure', 'salon_001', '11:00', 45, 1, 'manicure', null, 500),
+  template('salon_001_1400_manicure', 'salon_001', '14:00', 45, 1, 'manicure', null, 500),
+  template('salon_002_1300_haircut', 'salon_002', '13:00', 60, 1, 'haircut', null, 900),
+  template('salon_002_1500_manicure', 'salon_002', '15:00', 45, 1, 'manicure', null, 650),
+  template('hotel_001_1500_standard', 'hotel_001', '15:00', 1200, 2, null, 'standard', 2800),
+  template('hotel_001_1500_deluxe', 'hotel_001', '15:00', 1200, 3, null, 'deluxe', 4200),
+  template('hotel_002_1500_standard', 'hotel_002', '15:00', 1200, 2, null, 'standard', 2400),
+  template('hotel_002_1500_suite', 'hotel_002', '15:00', 1200, 4, null, 'suite', 5100),
 ];

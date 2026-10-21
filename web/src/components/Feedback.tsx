@@ -30,6 +30,33 @@ export function ErrorMessage({
   );
 }
 
+/** Shown across the page while the MCP server cannot be reached. */
+export function StatusBanner({
+  message,
+  onRetry,
+  onUseDemo,
+}: {
+  message: string;
+  onRetry(): void;
+  onUseDemo(): void;
+}) {
+  return (
+    <div className="banner" role="alert">
+      <p>
+        <strong>Not connected.</strong> {message}
+      </p>
+      <div className="actions">
+        <button type="button" className="btn primary small" onClick={onRetry}>
+          Try again
+        </button>
+        <button type="button" className="btn ghost small" onClick={onUseDemo}>
+          Use demo data instead
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Skeleton({ count = 3 }: { count?: number }) {
   return (
     <div className="skeletons" aria-hidden="true">
