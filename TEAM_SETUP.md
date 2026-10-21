@@ -2,7 +2,7 @@
 
 ## Both teammates
 
-1. Install Python 3.10+, Node.js 18+, Git, and `pip` (included with Python).
+1. Install Python 3.10+, Node.js 20.19+ or 22.12+, Git, and `pip` (included with Python).
 2. Extract the zip or clone the GitHub repository.
 3. Run `./setup.sh` on macOS/Linux, or run the equivalent commands in `README.md` on Windows.
 4. Create a branch using your name.
