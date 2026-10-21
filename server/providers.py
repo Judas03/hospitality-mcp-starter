@@ -43,7 +43,7 @@ class ProviderAdapter(ABC):
                 tzinfo=ZoneInfo(listing.timezone),
             )
             end = start + timedelta(minutes=template.duration_minutes)
-            if end <= now:
+            if start <= now:
                 continue
             occurrence = AvailabilityOccurrence(
                 availability_id=repository.make_availability_id(listing, template, request.date),

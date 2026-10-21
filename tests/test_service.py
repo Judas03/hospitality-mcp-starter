@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time, timezone
 
 import pytest
 
@@ -130,6 +130,41 @@ def test_conflict_returns_two_nearby_alternatives(service: ReservationService) -
     assert all(item.availability_id != option.availability_id for item in payload.alternatives)
 
 
+def test_conflicting_modification_preserves_original_booking(
+    service: ReservationService,
+) -> None:
+    options = restaurant_search(service).results
+    first = service.create_booking_hold(
+        CreateBookingHoldRequest(
+            availability_id=options[0].availability_id,
+            guest_name="First Guest",
+            guest_contact="first@example.com",
+            party_size=2,
+        )
+    )
+    service.create_booking_hold(
+        CreateBookingHoldRequest(
+            availability_id=options[1].availability_id,
+            guest_name="Second Guest",
+            guest_contact="second@example.com",
+            party_size=2,
+        )
+    )
+
+    with pytest.raises(BusinessError) as conflict:
+        service.modify_booking(
+            ModifyBookingRequest(
+                booking_id=first.booking.booking_id,
+                new_availability_id=options[1].availability_id,
+            )
+        )
+
+    assert conflict.value.response.error.code == BusinessErrorCode.SLOT_UNAVAILABLE
+    unchanged = service.get_booking(BookingIdRequest(booking_id=first.booking.booking_id))
+    assert unchanged.booking.availability_id == options[0].availability_id
+    assert unchanged.booking.status == BookingStatus.HELD
+
+
 def test_hold_expiry_is_applied_lazily(
     service: ReservationService, clock: MutableClock
 ) -> None:
@@ -144,6 +179,50 @@ def test_hold_expiry_is_applied_lazily(
             ConfirmBookingRequest(booking_id=held.booking.booking_id, user_confirmed=True)
         )
     assert expired.value.response.error.code == BusinessErrorCode.HOLD_EXPIRED
+
+
+def test_started_slots_are_unavailable_for_search_and_hold(
+    service: ReservationService,
+    clock: MutableClock,
+) -> None:
+    option = restaurant_search(service).results[0]
+    clock.current = datetime(2026, 10, 23, 12, 0, 1, tzinfo=timezone.utc)
+
+    refreshed = restaurant_search(service)
+    assert all(result.start_time > clock.current for result in refreshed.results)
+
+    with pytest.raises(BusinessError) as started:
+        service.create_booking_hold(
+            CreateBookingHoldRequest(
+                availability_id=option.availability_id,
+                guest_name="Late Guest",
+                guest_contact="late@example.com",
+                party_size=2,
+            )
+        )
+    assert started.value.response.error.code == BusinessErrorCode.SLOT_UNAVAILABLE
+
+
+def test_hold_cannot_outlive_the_slot_start(
+    service: ReservationService,
+    clock: MutableClock,
+) -> None:
+    clock.current = datetime(2026, 10, 23, 11, 58, 0, tzinfo=timezone.utc)
+    option = restaurant_search(service).results[0]
+
+    held = service.create_booking_hold(
+        CreateBookingHoldRequest(
+            availability_id=option.availability_id,
+            guest_name="Last Minute Guest",
+            guest_contact="last-minute@example.com",
+            party_size=2,
+        )
+    )
+
+    assert held.booking.expires_at == option.start_time
+    clock.advance(seconds=121)
+    current = service.get_booking(BookingIdRequest(booking_id=held.booking.booking_id))
+    assert current.booking.status == BookingStatus.EXPIRED
 
 
 def test_salon_and_hotel_adapters_return_provider_specific_inventory(

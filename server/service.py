@@ -72,20 +72,29 @@ class ReservationService:
                 "Search again and select one of the returned availability options.",
                 retryable=True,
             )
-        if request.party_size > occurrence.max_party_size or occurrence.end_time <= now:
-            alternatives = self._alternatives(occurrence, request.party_size, now)
+        if request.party_size > occurrence.max_party_size:
             self._raise(
                 BusinessErrorCode.SLOT_UNAVAILABLE,
                 "That option cannot accommodate the requested party.",
                 retryable=True,
-                alternatives=alternatives,
+                alternatives=self._alternatives(occurrence, request.party_size, now),
+            )
+        if occurrence.start_time <= now:
+            self._raise(
+                BusinessErrorCode.SLOT_UNAVAILABLE,
+                "That option has already started.",
+                retryable=True,
+                alternatives=self._alternatives(occurrence, request.party_size, now),
             )
         booking = self.repository.create_booking(
             occurrence,
             guest_name=request.guest_name,
             guest_contact=request.guest_contact,
             party_size=request.party_size,
-            expires_at=now + timedelta(seconds=self.hold_ttl_seconds),
+            expires_at=min(
+                now + timedelta(seconds=self.hold_ttl_seconds),
+                occurrence.start_time.astimezone(timezone.utc),
+            ),
             now=now,
         )
         if booking is None:
@@ -161,10 +170,10 @@ class ReservationService:
                     retryable=False,
                     booking=current,
                 )
-            if occurrence.end_time <= now:
+            if occurrence.start_time <= now:
                 self._raise(
                     BusinessErrorCode.SLOT_UNAVAILABLE,
-                    "The replacement time has already passed.",
+                    "The replacement time has already started.",
                     retryable=True,
                     booking=current,
                 )
