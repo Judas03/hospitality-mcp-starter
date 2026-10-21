@@ -3,3 +3,4 @@ starlette>=0.48.0,<1.0.0
 uvicorn[standard]>=0.30.0,<1.0.0
 pydantic>=2.0.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
+tzdata>=2024.1,<2027.0

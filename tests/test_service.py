@@ -257,6 +257,23 @@ def test_salon_and_hotel_adapters_return_provider_specific_inventory(
     assert all(result.provider_type == ProviderType.HOTEL for result in hotel.results)
 
 
+def test_restaurant_reason_does_not_repeat_seating(service: ReservationService) -> None:
+    results = service.search_availability(
+        SearchAvailabilityRequest(
+            provider_type=ProviderType.RESTAURANT,
+            location="Bangkok",
+            date=DEMO_DATE,
+            time=time(19, 0),
+            party_size=4,
+            preferences=["outdoor seating"],
+        )
+    ).results
+
+    assert results
+    assert "outdoor seating" in results[0].reason.lower()
+    assert "seating seating" not in results[0].reason.lower()
+
+
 def test_unknown_ids_and_cross_provider_modification_return_clear_errors(
     service: ReservationService,
 ) -> None:

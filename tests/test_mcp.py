@@ -91,6 +91,7 @@ async def test_mcp_lifecycle_errors_and_idempotency(
             {**search_args, "provider_type": "spa"},
         )
         assert invalid_provider.is_error is True
+        assert invalid_provider.structured_content is None
 
         unavailable = await client.call_tool(
             "search_availability",

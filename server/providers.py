@@ -127,7 +127,11 @@ class RestaurantAdapter(ProviderAdapter):
         template: AvailabilityTemplate,
         request: SearchAvailabilityRequest,
     ) -> str:
-        preference = f"{', '.join(request.preferences).title()} seating and " if request.preferences else ""
+        preference = ""
+        if request.preferences:
+            label = ", ".join(request.preferences).title()
+            connector = " and " if label.lower().endswith("seating") else " seating and "
+            preference = f"{label}{connector}"
         return f"{preference}a table for {request.party_size} is available at {listing.name}"
 
 

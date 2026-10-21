@@ -14,7 +14,10 @@ the plain HTTP route `GET /health` and must not appear in `tools/list`.
   `initialize`, `tools/list`, and `tools/call`.
 - The browser must retain and resend `Mcp-Session-Id` when the server returns it.
 - Tool success payloads are returned as structured content.
-- Validation failures use normal MCP/JSON-RPC errors.
+- JSON-RPC envelope and protocol failures use normal MCP/JSON-RPC errors.
+- Tool dispatch and input-schema validation failures use the official SDK's
+  `isError: true` tool result with a text diagnostic. Clients must not parse
+  that diagnostic as a stable structured payload.
 - Business failures use an MCP tool result with `isError: true` and the
   structured error payload described below.
 
