@@ -12,7 +12,8 @@ interface TopBarProps {
   connection: ConnectionState;
   /** The live server's MCP address, or null in demo mode. */
   endpoint: string | null;
-  onSwitchMode(mode: ClientMode): void;
+  /** Null hides the switch, e.g. while recording the scripted demo. */
+  onSwitchMode: ((mode: ClientMode) => void) | null;
   readAloud: boolean;
   onReadAloud(on: boolean): void;
 }
@@ -50,13 +51,15 @@ export function TopBar({
           </button>
         )}
         <ConnectionStatus connection={connection} endpoint={endpoint} />
-        <button
-          type="button"
-          className="btn ghost small"
-          onClick={() => onSwitchMode(connection.mode === 'demo' ? 'live' : 'demo')}
-        >
-          {connection.mode === 'demo' ? 'Use live server' : 'Use demo data'}
-        </button>
+        {onSwitchMode && (
+          <button
+            type="button"
+            className="btn ghost small"
+            onClick={() => onSwitchMode(connection.mode === 'demo' ? 'live' : 'demo')}
+          >
+            {connection.mode === 'demo' ? 'Use live server' : 'Use demo data'}
+          </button>
+        )}
       </div>
     </header>
   );

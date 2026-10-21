@@ -108,6 +108,29 @@ describe.skipIf(!MCP_TEST_URL)('LiveClient against the real MCP server', () => {
     expect(log.filter((entry) => entry.method === 'tools/call').map((entry) => entry.tool)).toContain('modify_booking');
   });
 
+  it('loses a slot to another guest’s session, with the server’s alternatives', async () => {
+    const other = new LiveClient(MCP_TEST_URL ?? '', () => {});
+    const otherInfo = await other.connect();
+    try {
+      expect(otherInfo.sessionId).not.toBe(info.sessionId);
+      const [best] = data(await live.callTool('search_availability', { ...base, time: '18:00' })).results;
+      const taken = data(
+        await other.callTool('create_booking_hold', {
+          availability_id: best.availability_id,
+          party_size: 2,
+          guest_name: 'Another Guest',
+          guest_contact: 'another.guest@example.com',
+        }),
+      );
+      const mine = await live.callTool('create_booking_hold', { availability_id: best.availability_id, party_size: 2, ...guest });
+      expect(!mine.ok && mine.error.code).toBe('slot_unavailable');
+      expect(!mine.ok && mine.error.alternatives.length).toBeGreaterThan(0);
+      await other.callTool('cancel_booking', { booking_id: taken.booking.booking_id });
+    } finally {
+      await other.close();
+    }
+  });
+
   it('reads input the server rejects as an invalid-input error', async () => {
     const out = await live.callTool('confirm_booking', { booking_id: 'nope', user_confirmed: 'yes' as unknown as true });
     expect(!out.ok && out.error.code).toBe(CLIENT_ERROR_CODES.invalidInput);

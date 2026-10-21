@@ -6,12 +6,13 @@ import { ConversationPanel } from './components/Conversation';
 import { StatusBanner } from './components/Feedback';
 import { TopBar } from './components/TopBar';
 import { suggestionsFor } from './conversation/suggestions';
+import { useDemoScript } from './demo/useDemoScript';
 import { useActivityLog } from './hooks/useActivityLog';
 import { useSpeech } from './hooks/useSpeech';
 import { DemoClient } from './mcp/demoClient';
 import { DEFAULT_MCP_URL, LiveClient } from './mcp/liveClient';
 import { errorText } from './mcp/loggingTransport';
-import type { ClientMode, ConnectionState, ToolClient } from './mcp/types';
+import type { ClientMode, ConnectionState, LogEntry, ToolClient } from './mcp/types';
 
 const params = new URLSearchParams(window.location.search);
 
@@ -20,6 +21,10 @@ const MODE: ClientMode = params.get('mode') === 'demo' ? 'demo' : 'live';
 
 /** Set VITE_MCP_URL in web/.env.local when the server is not on the contract's default address. */
 const MCP_URL: string = import.meta.env.VITE_MCP_URL || DEFAULT_MCP_URL;
+
+/** `?script=main` plays the scripted demo for the recording: one click per line. */
+const SCRIPTED = params.get('script') === 'main';
+const RIVAL = 'Another guest';
 
 /** `?hold=20` shortens demo holds to 20 seconds, to show an expiry on a recording. */
 function holdSecondsFromUrl(): number | undefined {
@@ -48,6 +53,26 @@ export function App() {
     [activity.add],
   );
   const agent = useBookingAgent(client);
+
+  // The scripted demo's other guest: a second session on the same server or demo data. Only its
+  // tool calls go in the log, tagged so viewers can tell them apart.
+  const logRival = useCallback(
+    (entry: Omit<LogEntry, 'id'>) => {
+      if (entry.method === 'tools/call') activity.add({ ...entry, actor: RIVAL });
+    },
+    [activity.add],
+  );
+  const rival = useMemo<ToolClient | null>(() => {
+    if (!SCRIPTED) return null;
+    return client instanceof DemoClient ? client.withLog(logRival) : new LiveClient(MCP_URL, logRival);
+  }, [client, logRival]);
+  const makeQuietClient = useMemo(() => (SCRIPTED && MODE === 'live' ? () => new LiveClient(MCP_URL, () => {}) : null), []);
+  const script = useDemoScript({ enabled: SCRIPTED, agent, rival, makeQuietClient });
+  // While scripting, the next line is the only chip; normal suggestions return once the script ends.
+  let suggestions = suggestionsFor(agent.state);
+  if (SCRIPTED && script.nextLine) suggestions = [script.nextLine];
+  else if (SCRIPTED && !script.ready) suggestions = [];
+
   const [readAloud, setReadAloud] = useState(false);
   const speaking = useSpeech(agent.messages, readAloud);
 
@@ -75,10 +100,16 @@ export function App() {
         locked={agent.state.busy !== null}
         connection={connection}
         endpoint={client.endpoint}
-        onSwitchMode={switchMode}
+        onSwitchMode={SCRIPTED ? null : switchMode}
         readAloud={readAloud}
         onReadAloud={setReadAloud}
       />
+      {MODE === 'demo' && (
+        <p className="demo-strip" role="note">
+          <strong>Demo mode.</strong> Answers come from sample data in this browser tab, with the same seven tools and
+          rules as the live MCP server.
+        </p>
+      )}
       {connection.status === 'error' && (
         <StatusBanner
           message={connection.message ?? `Can't reach the MCP server at ${MCP_URL}.`}
@@ -91,8 +122,10 @@ export function App() {
           messages={agent.messages}
           busy={agent.state.busy}
           speaking={speaking}
-          suggestions={suggestionsFor(agent.state)}
+          suggestions={suggestions}
           onSend={agent.send}
+          onPick={(text) => (text === script.nextLine ? void script.playNext() : agent.send(text))}
+          chipsDisabled={script.playing}
           disabled={connection.status !== 'connected'}
         />
         <div className="side">

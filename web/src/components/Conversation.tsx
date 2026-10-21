@@ -21,10 +21,23 @@ interface ConversationPanelProps {
   speaking: boolean;
   suggestions: string[];
   onSend(text: string): void;
+  /** What a suggestion chip does; sends its text when not given. */
+  onPick?(text: string): void;
   disabled: boolean;
+  /** Holds the chips back without blocking typing. */
+  chipsDisabled?: boolean;
 }
 
-export function ConversationPanel({ messages, busy, speaking, suggestions, onSend, disabled }: ConversationPanelProps) {
+export function ConversationPanel({
+  messages,
+  busy,
+  speaking,
+  suggestions,
+  onSend,
+  onPick,
+  disabled,
+  chipsDisabled = false,
+}: ConversationPanelProps) {
   const replied = useRecentReply(messages);
   const ring: RingState = busy ? 'thinking' : speaking || replied ? 'speaking' : 'idle';
   return (
@@ -38,7 +51,11 @@ export function ConversationPanel({ messages, busy, speaking, suggestions, onSen
       </div>
       <MessageList messages={messages} busy={busy} />
       <div className="composer-area">
-        <SuggestionChips suggestions={suggestions} onPick={onSend} disabled={disabled || busy !== null} />
+        <SuggestionChips
+          suggestions={suggestions}
+          onPick={onPick ?? onSend}
+          disabled={disabled || chipsDisabled || busy !== null}
+        />
         <Composer onSend={onSend} disabled={disabled} busy={busy !== null} />
       </div>
     </section>

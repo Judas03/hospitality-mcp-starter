@@ -29,6 +29,8 @@ export interface LogEntry {
   /** Epoch milliseconds when the request was sent. */
   at: number;
   mode: ClientMode;
+  /** Who made the call when it was not this page's guest, e.g. "Another guest" in the scripted demo. */
+  actor?: string;
   method: LogMethod;
   tool?: string;
   request: unknown;

@@ -67,6 +67,12 @@ interface Occurrence {
   end_time: string;
 }
 
+/** The demo "database": shared by every client made with withLog, like guests sharing one server. */
+interface DemoStore {
+  occurrences: Map<string, Occurrence>;
+  bookings: Map<string, Booking>;
+}
+
 class BusinessFailure {
   constructor(readonly payload: BusinessErrorPayload) {}
 }
@@ -146,16 +152,30 @@ export class DemoClient implements ToolClient {
   private readonly now: () => Date;
   private readonly holdSeconds: number;
   private readonly latencyMs: number;
-  private readonly occurrences = new Map<string, Occurrence>();
-  private readonly bookings = new Map<string, Booking>();
+  private readonly store: DemoStore;
 
   constructor(
     private readonly log: LogSink,
-    options: DemoClientOptions = {},
+    private readonly options: DemoClientOptions = {},
+    store?: DemoStore,
   ) {
     this.now = options.now ?? (() => new Date());
     this.holdSeconds = options.holdSeconds ?? HOLD_SECONDS;
     this.latencyMs = options.latencyMs ?? 350;
+    this.store = store ?? { occurrences: new Map(), bookings: new Map() };
+  }
+
+  /** Another guest's connection to the same demo data, reporting to its own log. */
+  withLog(log: LogSink): DemoClient {
+    return new DemoClient(log, this.options, this.store);
+  }
+
+  private get occurrences() {
+    return this.store.occurrences;
+  }
+
+  private get bookings() {
+    return this.store.bookings;
   }
 
   async connect(): Promise<ServerInfo> {

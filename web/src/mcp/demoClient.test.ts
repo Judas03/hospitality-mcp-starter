@@ -140,6 +140,27 @@ describe('DemoClient bookings, with the backend’s rules and wording', () => {
     expect(second.error.alternatives.map(timeOf)).toEqual(['18:30', '19:30']);
   });
 
+  it('shares its data with another guest, who can take a slot first', async () => {
+    const { client, log } = setup();
+    const otherLog: Array<Omit<LogEntry, 'id'>> = [];
+    const other = client.withLog((entry) => otherLog.push(entry));
+    const [best] = await search(client);
+    const taken = data(
+      await other.callTool('create_booking_hold', {
+        availability_id: best.availability_id,
+        party_size: 2,
+        guest_name: 'Another Guest',
+        guest_contact: 'another.guest@example.com',
+      }),
+    );
+    expect(taken.booking.guest_name).toBe('Another Guest');
+    const mine = await client.callTool('create_booking_hold', { availability_id: best.availability_id, party_size: 2, ...guest });
+    expect(!mine.ok && mine.error.code).toBe('slot_unavailable');
+    expect(!mine.ok && mine.error.alternatives.map(timeOf)).toEqual(['18:30', '19:30']);
+    expect(otherLog.map((entry) => entry.tool)).toEqual(['create_booking_hold']);
+    expect(log.map((entry) => entry.tool)).toEqual(['search_availability', 'create_booking_hold']);
+  });
+
   it('lets a hold expire', async () => {
     const { client, advance } = setup();
     const [best] = await search(client);

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatClock } from '../lib/time';
 import type { ConnectionState, LogEntry as Entry } from '../mcp/types';
 
@@ -12,10 +12,14 @@ export function ActivityLog({
   onClear(): void;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
+  // The newest tool call opens by itself, so each call's arguments and result are on screen.
+  // An entry opened or closed by hand keeps that choice.
+  const followId = [...entries].reverse().find((entry) => entry.method === 'tools/call')?.id ?? null;
+  const [choices, setChoices] = useState<Map<number, boolean>>(() => new Map());
   useEffect(() => {
     const list = listRef.current;
     if (list) list.scrollTop = list.scrollHeight;
-  }, [entries.length]);
+  }, [entries.length, followId]);
   const info = connection.info;
 
   return (
@@ -30,7 +34,15 @@ export function ActivityLog({
         </div>
         <div className="log-tools">
           <span className="count">{entries.length === 1 ? '1 message' : `${entries.length} messages`}</span>
-          <button type="button" className="btn ghost small" onClick={onClear} disabled={entries.length === 0}>
+          <button
+            type="button"
+            className="btn ghost small"
+            onClick={() => {
+              setChoices(new Map());
+              onClear();
+            }}
+            disabled={entries.length === 0}
+          >
             Clear
           </button>
         </div>
@@ -40,7 +52,12 @@ export function ActivityLog({
       ) : (
         <ol className="log-list" ref={listRef}>
           {entries.map((entry) => (
-            <LogEntry key={entry.id} entry={entry} />
+            <LogEntry
+              key={entry.id}
+              entry={entry}
+              open={choices.get(entry.id) ?? entry.id === followId}
+              onOpenChange={(open) => setChoices((map) => new Map(map).set(entry.id, open))}
+            />
           ))}
         </ol>
       )}
@@ -48,14 +65,20 @@ export function ActivityLog({
   );
 }
 
-export function LogEntry({ entry }: { entry: Entry }) {
+export function LogEntry({ entry, open, onOpenChange }: { entry: Entry; open: boolean; onOpenChange(open: boolean): void }) {
   return (
-    <li className="log-entry" data-ok={entry.ok}>
-      <details>
+    <li className="log-entry" data-ok={entry.ok} data-actor={entry.actor ? 'other' : undefined}>
+      <details
+        open={open}
+        onToggle={(event) => {
+          if (event.currentTarget.open !== open) onOpenChange(event.currentTarget.open);
+        }}
+      >
         <summary>
           <span className="log-time">{formatClock(entry.at)}</span>
           <span className="method">{entry.method}</span>
           {entry.tool && <span className="tool">{entry.tool}</span>}
+          {entry.actor && <span className="tag actor">{entry.actor}</span>}
           <span className="log-status" aria-label={entry.ok ? 'succeeded' : 'failed'}>
             {entry.ok ? '✓' : '✕'}
           </span>
