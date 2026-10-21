@@ -65,6 +65,7 @@ describe.skipIf(!MCP_TEST_URL)('LiveClient against the real MCP server', () => {
   it.each([
     ['a quiet table', {}],
     ['a table by the river', { preferences: ['river view'] }],
+    ['an outdoor table for four', { party_size: 4, time: '19:30', preferences: ['outdoor seating'] }],
     ['a haircut', { provider_type: 'salon', time: '13:00', party_size: 1, service_type: 'haircut', preferences: [] }],
     ['any hotel room', { provider_type: 'hotel', time: '15:00', preferences: [] }],
     ['a suite for four', { provider_type: 'hotel', time: '15:00', party_size: 4, room_type: 'suite', preferences: [] }],

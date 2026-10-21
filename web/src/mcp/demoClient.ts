@@ -123,7 +123,12 @@ function reasonFor(listing: Listing, template: DemoTemplate, request: SearchAvai
   if (listing.provider_type === 'hotel') {
     return `A ${template.room_type} room for ${request.party_size} is available at ${listing.name}`;
   }
-  const wishes = request.preferences.length > 0 ? `${titleCase(request.preferences.join(', '))} seating and ` : '';
+  // As the backend words it: no second "seating" when the wishes already end with it.
+  let wishes = '';
+  if (request.preferences.length > 0) {
+    const label = titleCase(request.preferences.join(', '));
+    wishes = `${label}${label.toLowerCase().endsWith('seating') ? ' and ' : ' seating and '}`;
+  }
   return `${wishes}a table for ${request.party_size} is available at ${listing.name}`;
 }
 
@@ -278,7 +283,7 @@ export class DemoClient implements ToolClient {
         if (distance > SEARCH_WINDOW_MINUTES) continue;
         const start = toIsoDateTime(request.date, template.local_start);
         const end = addMinutes(start, template.duration_minutes);
-        if (Date.parse(end) <= now) continue;
+        if (Date.parse(start) <= now) continue;
         const id = availabilityId(listing, template, request.date);
         this.occurrences.set(id, { availability_id: id, listing, template, start_time: start, end_time: end });
         if (!this.isAvailable(id)) continue;
@@ -327,8 +332,13 @@ export class DemoClient implements ToolClient {
     if (!occurrence) {
       raise('availability_not_found', 'Search again and select one of the returned availability options.', true);
     }
-    if (input.party_size > occurrence.template.max_party_size || Date.parse(occurrence.end_time) <= now) {
+    if (input.party_size > occurrence.template.max_party_size) {
       raise('slot_unavailable', 'That option cannot accommodate the requested party.', true, {
+        alternatives: this.alternatives(occurrence, input.party_size),
+      });
+    }
+    if (Date.parse(occurrence.start_time) <= now) {
+      raise('slot_unavailable', 'That option has already started.', true, {
         alternatives: this.alternatives(occurrence, input.party_size),
       });
     }
@@ -351,7 +361,8 @@ export class DemoClient implements ToolClient {
       party_size: input.party_size,
       service_type: occurrence.template.service_type,
       room_type: occurrence.template.room_type,
-      expires_at: new Date(now + this.holdSeconds * 1000).toISOString(),
+      // A hold never outlives the start of the slot it holds.
+      expires_at: new Date(Math.min(now + this.holdSeconds * 1000, Date.parse(occurrence.start_time))).toISOString(),
       created_at: stamp,
       updated_at: stamp,
     };
@@ -392,8 +403,8 @@ export class DemoClient implements ToolClient {
       if (occurrence.listing.provider_type !== current.provider_type) {
         raise('invalid_state', 'A booking cannot be moved to a different provider type.', false, { booking: current });
       }
-      if (Date.parse(occurrence.end_time) <= now) {
-        raise('slot_unavailable', 'The replacement time has already passed.', true, { booking: current });
+      if (Date.parse(occurrence.start_time) <= now) {
+        raise('slot_unavailable', 'The replacement time has already started.', true, { booking: current });
       }
     }
     if (!occurrence) {

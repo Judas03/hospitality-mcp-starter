@@ -90,6 +90,12 @@ describe('DemoClient search, as the backend searches', () => {
     );
   });
 
+  it('does not say "seating" twice when the wish already ends with it', async () => {
+    const { client } = setup();
+    const [best] = await search(client, { party_size: 4, time: '19:30', preferences: ['outdoor seating'] });
+    expect(best.reason).toBe('Outdoor Seating and a table for 4 is available at Riverside Social');
+  });
+
   it('finds salon services and hotel rooms with their own ids and prices', async () => {
     const { client } = setup();
     const haircuts = await search(client, { provider_type: 'salon', time: '13:00', party_size: 1, service_type: 'haircut', preferences: [] });
@@ -173,6 +179,31 @@ describe('DemoClient bookings, with the backend’s rules and wording', () => {
     expect(read.summary).toBe('The booking hold at Siam Serenity has expired.');
     const cancelled = await client.callTool('cancel_booking', { booking_id: held.booking.booking_id });
     expect(!cancelled.ok && cancelled.error.code).toBe('invalid_state');
+  });
+
+  it('never lets a hold outlive the start of its slot, and refuses a slot that has started', async () => {
+    const { client, advance } = setup();
+    const manicure: Partial<SearchAvailabilityInput> = {
+      provider_type: 'salon',
+      date: '2026-10-21',
+      time: '11:00',
+      party_size: 1,
+      service_type: 'manicure',
+      preferences: [],
+    };
+    advance(58 * 60); // 10:58, two minutes before the 11:00 manicure
+    const [soon] = await search(client, manicure);
+    expect(timeOf(soon)).toBe('11:00');
+    const held = await hold(client, soon, 1);
+    expect(held.booking.expires_at).toBe('2026-10-21T04:00:00.000Z');
+
+    const [later] = (await search(client, { ...manicure, time: '14:00' })).filter((slot) => timeOf(slot) === '14:00');
+    await client.callTool('cancel_booking', { booking_id: held.booking.booking_id });
+    advance(3 * 60); // 11:01
+    expect((await search(client, manicure)).map(timeOf)).not.toContain('11:00');
+    const started = await client.callTool('create_booking_hold', { availability_id: soon.availability_id, party_size: 1, ...guest });
+    expect(!started.ok && started.error.message).toBe('That option has already started.');
+    expect(!started.ok && started.error.alternatives.map((slot) => slot.availability_id)).toContain(later.availability_id);
   });
 
   it('moves a booking to a new availability, and leaves it alone on a conflict', async () => {
