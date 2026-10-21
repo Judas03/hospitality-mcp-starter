@@ -1,7 +1,8 @@
 # MCP Contract v0.2
 
-This is the shared implementation contract for the backend and frontend. Any
-breaking change must be agreed by both teammates before code using it is merged.
+This document defines the public MCP interface exposed by the Python server and
+consumed by the web client. Server and client releases should keep these schemas,
+business rules, and stable error codes aligned.
 
 The server exposes exactly the seven tools documented below. Health checks use
 the plain HTTP route `GET /health` and must not appear in `tools/list`.

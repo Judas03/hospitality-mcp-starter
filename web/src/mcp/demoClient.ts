@@ -36,8 +36,8 @@ import {
   type ToolOutcome,
 } from './types';
 
-// A browser-only stand-in for the backend that follows its rules (server/service.py and
-// server/providers.py on backend-codex): same inventory, same errors, same summaries.
+// A browser-only stand-in that follows the live server's rules: the same inventory,
+// errors, and summaries.
 
 export const DEMO_TOOLS: ToolInfo[] = [
   { name: 'search_availability', description: 'Search real demo inventory and explain why each option matches.' },

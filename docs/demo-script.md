@@ -16,8 +16,8 @@ What the judges need to see, and where it happens:
 ## Before you record
 
 1. **Start the MCP server** from the repository root: `python -m server.mcp_server`.
-   It listens on `http://127.0.0.1:8000/mcp`. On Windows it needs the `tzdata` package
-   (`pip install tzdata`) until it is added to `requirements.txt`.
+   It listens on `http://127.0.0.1:8000/mcp`. The included `tzdata` dependency provides
+   timezone data on platforms that do not bundle it, including Windows.
 2. **Start the web page**: `cd web`, then `npm run dev`, then open
    `http://127.0.0.1:5173/?script=main`.
 3. **Check the page is live**:

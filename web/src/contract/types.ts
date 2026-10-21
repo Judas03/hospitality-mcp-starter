@@ -1,5 +1,5 @@
-// Field names and shapes from docs/mcp-contract.md v0.2 (backend-codex). This is the only
-// place the frontend spells them out.
+// Field names and shapes from docs/mcp-contract.md v0.2. This is the only place the
+// frontend spells them out.
 
 export const PROVIDER_TYPES = ['restaurant', 'salon', 'hotel'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];

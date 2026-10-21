@@ -1,7 +1,7 @@
 import type { Listing } from '../contract/types';
 
-// A copy of the backend's seed inventory (server/repository.py on backend-codex), so demo
-// mode shows the same places, times and prices as the live server. Keep the two in step.
+// A copy of the backend's seed inventory, so demo mode shows the same places, times,
+// and prices as the live server. Keep the two in step.
 
 export interface DemoTemplate {
   template_id: string;
