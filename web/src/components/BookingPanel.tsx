@@ -4,7 +4,7 @@ import type { Agent } from '../booking/useBookingAgent';
 import type { Availability, ProviderType, SearchAvailabilityInput } from '../contract/types';
 import { DEFAULT_LOCATION, DEFAULT_TIMES } from '../conversation/understand';
 import { durationLabel, partyLabel, priceLabel } from '../lib/format';
-import { groupByPlace, type Place } from '../lib/places';
+import { groupByPlace, slotLabel, type Place } from '../lib/places';
 import { addDays, bangkokDate, formatClockTime, formatDate, formatTime } from '../lib/time';
 import { BookingTicket, CancelledCard, ConflictCard, HoldCard, ListingDetails } from './BookingCards';
 import { EmptyState, ErrorMessage, Skeleton } from './Feedback';
@@ -339,21 +339,6 @@ export function ResultsList({
       ))}
     </ol>
   );
-}
-
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-
-/** The text on a slot button: only what tells this place's options apart. */
-function slotLabel(slot: Availability, place: Place): string {
-  const parts: string[] = [];
-  const oneTime = place.slots.every((other) => other.start_time === slot.start_time);
-  const qualifier = slot.service_type ?? slot.room_type;
-  const mixedOptions = new Set(place.slots.map((other) => other.service_type ?? other.room_type)).size > 1;
-  const mixedPrices = new Set(place.slots.map((other) => other.price)).size > 1;
-  if (!oneTime) parts.push(formatTime(slot.start_time));
-  if (qualifier && (mixedOptions || oneTime)) parts.push(capitalize(qualifier));
-  if (mixedPrices) parts.push(priceLabel(slot));
-  return parts.join(' · ');
 }
 
 function placeMeta(slot: Availability): string {

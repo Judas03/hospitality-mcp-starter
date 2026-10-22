@@ -96,6 +96,25 @@ describe('understand: the conversation around a booking', () => {
 
   it('reads "it" as the only place on screen', () => {
     expect(understand('Tell me more about it', onePlace)).toEqual({ kind: 'details', index: 0 });
+    expect(understand('Tell me more', onePlace)).toEqual({ kind: 'details', index: 0 });
+    expect(understand("What's it like?", onePlace)).toEqual({ kind: 'details', index: 0 });
+  });
+
+  it('does not open the only place for a question about something else', () => {
+    expect(understand("what's the weather like", onePlace)).toEqual({ kind: 'unknown' });
+    expect(understand('what is the time', onePlace)).toEqual({ kind: 'unknown' });
+  });
+
+  it('treats a request for something else as a new search, not a pick', () => {
+    const tables: Situation = { ...idle, resultNames: ['Riverside Social'], resultsProvider: 'restaurant' };
+    expect(understand('Book a haircut for one tomorrow at 1 PM', tables)).toEqual({
+      kind: 'search',
+      fields: { provider_type: 'salon', date: '2026-10-22', time: '13:00', party_size: 1, service_type: 'haircut' },
+    });
+    expect(understand('Book a table for two tomorrow at 8 PM', tables).kind).toBe('search');
+    expect(understand('Hold the 7:30 PM one', tables)).toEqual({ kind: 'choose', index: null, time: '19:30' });
+    // A bare 7:30 reads as 07:30; picking it among evening options is findSlotAt's job.
+    expect(understand('Hold the 7:30 table', tables)).toEqual({ kind: 'choose', index: null, time: '07:30' });
   });
 
   it('takes a plain yes after results as the best match', () => {

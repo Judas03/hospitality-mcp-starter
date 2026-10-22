@@ -1,4 +1,4 @@
-import type { Availability, BookingResult, SearchAvailabilityInput } from '../contract/types';
+import type { Availability, BookingResult, Listing, SearchAvailabilityInput } from '../contract/types';
 import { groupByPlace } from '../lib/places';
 import { formatClockTime, formatDate, formatTime } from '../lib/time';
 
@@ -41,6 +41,19 @@ export function results(list: Availability[], input: SearchAvailabilityInput): s
       ? `I found ${list.length === 1 ? `one ${noun}` : `${list.length} ${noun}s`} at ${best.name}`
       : `I found ${list.length} options at ${places.length} places`;
   return `${found} for ${describeSearch(input)}. ${best.reason}, closest at ${formatTime(best.start_time)}. Shall I hold it?`;
+}
+
+/** A short spoken version of the details sheet. */
+export function details(listing: Listing): string {
+  const about = listing.description.charAt(0).toLowerCase() + listing.description.slice(1);
+  const features = listing.features.length > 0 ? ` Features: ${listing.features.join(', ')}.` : '';
+  const offers =
+    listing.service_types.length > 0
+      ? ` Services: ${listing.service_types.join(', ')}.`
+      : listing.room_types.length > 0
+        ? ` Rooms: ${listing.room_types.join(', ')}.`
+        : '';
+  return `${listing.name}: ${about}${features}${offers}`;
 }
 
 export function held(result: BookingResult): string {
