@@ -17,7 +17,8 @@ export type ItineraryEvent =
   | { type: 'hold_started' }
   | { type: 'leg_hold_started'; index: number }
   | { type: 'leg_held'; index: number; result: BookingResult }
-  | { type: 'leg_hold_failed'; index: number; error: ToolError; mayBeHeld: boolean }
+  /** `mayBeHeld` when the server never answered; `at` is when, in epoch milliseconds. */
+  | { type: 'leg_hold_failed'; index: number; error: ToolError; mayBeHeld: boolean; at: number }
   | { type: 'all_held' }
   | { type: 'approval_given' }
   /** The earliest hold's time is up: check every hold with the server. */
@@ -38,7 +39,11 @@ export type ItineraryEvent =
   | { type: 'leg_release_started'; index: number }
   | { type: 'leg_released'; index: number; result: BookingResult }
   | { type: 'leg_unresolved'; index: number; error: ToolError }
-  | { type: 'release_done' };
+  | { type: 'release_done' }
+  /** Look for holds that got no answer: by the time passed, or by a fresh search. */
+  | { type: 'unknown_check_started' }
+  | { type: 'unknown_hold_cleared'; index: number; note: string }
+  | { type: 'unknown_check_done' };
 
 /** Legs that may hold a booking on the server, so a rollback or cancellation must release them. */
 const RELEASABLE: LegStatus[] = ['held', 'confirmed', 'unresolved'];
@@ -48,6 +53,12 @@ const ACTIVE: LegStatus[] = ['holding', 'held', 'confirming', 'confirmed', 'canc
 export const RELEASED_NOTE = 'Released';
 export const RAN_OUT_NOTE = 'Hold ran out';
 export const NOTHING_FOUND_NOTE = 'Nothing matches this part.';
+
+/**
+ * How long a hold that got no answer may exist: the contract's hold length. Holds never outlast
+ * it, so after this a hold the page never heard about has run out on the server.
+ */
+export const UNKNOWN_HOLD_MS = 5 * 60_000;
 
 export function startItinerary(plan: { date: string; legs: PlannedLeg[] }): Itinerary {
   return {
@@ -66,7 +77,7 @@ export function startItinerary(plan: { date: string; legs: PlannedLeg[] }): Itin
       error: null,
       alternatives: [],
       note: null,
-      mayBeHeld: false,
+      mayBeHeld: null,
     })),
   };
 }
@@ -83,8 +94,24 @@ export function defaultOption(results: Availability[]): Availability | null {
     .reduce((best, option) => (option.price < best.price ? option : best));
 }
 
+/** A hold got no answer and may still exist on the server. */
+export function hasUnknownHold(plan: Itinerary): boolean {
+  return plan.legs.some((leg) => leg.mayBeHeld !== null);
+}
+
+/** When the last hold that got no answer has certainly run out, or null when there is none. */
+export function unknownHoldsUntil(plan: Itinerary): number | null {
+  const times = plan.legs.flatMap((leg) => (leg.mayBeHeld ? [leg.mayBeHeld.until] : []));
+  return times.length > 0 ? Math.max(...times) : null;
+}
+
 export function canHoldPlan(plan: Itinerary): boolean {
-  return plan.phase === 'ready' && !plan.busy && plan.legs.every((leg) => leg.status === 'selected' && leg.selected !== null);
+  return (
+    plan.phase === 'ready' &&
+    !plan.busy &&
+    !hasUnknownHold(plan) &&
+    plan.legs.every((leg) => leg.status === 'selected' && leg.selected !== null)
+  );
 }
 
 export function canConfirmPlan(plan: Itinerary): boolean {
@@ -95,14 +122,21 @@ export function canCancelPlan(plan: Itinerary): boolean {
   return (plan.phase === 'awaiting_approval' || plan.phase === 'confirmed') && !plan.busy;
 }
 
-/** Legs may be removed from the preview, but a plan always keeps at least two. */
-export function canRemoveLeg(plan: Itinerary): boolean {
-  return plan.phase === 'ready' && !plan.busy && plan.legs.length > 2;
+/**
+ * Legs may be removed from the preview, but a plan always keeps at least two, and a leg whose hold
+ * got no answer stays until that is cleared.
+ */
+export function canRemoveLeg(plan: Itinerary, index?: number): boolean {
+  const leg = index === undefined ? null : plan.legs[index];
+  return plan.phase === 'ready' && !plan.busy && plan.legs.length > 2 && leg?.mayBeHeld == null;
 }
 
-/** Whether any leg's booking is active or unverified, so the plan can't be closed or replaced. */
+/**
+ * Whether any leg's booking is active or unverified, including a hold that got no answer, so the
+ * plan can't be closed or replaced and nothing else can start.
+ */
 export function holdsBookings(plan: Itinerary): boolean {
-  return plan.legs.some((leg) => ACTIVE.includes(leg.status));
+  return plan.legs.some((leg) => ACTIVE.includes(leg.status) || leg.mayBeHeld !== null);
 }
 
 export function releasableLegs(plan: Itinerary): number[] {
@@ -190,7 +224,7 @@ export function itineraryReducer(plan: Itinerary, event: ItineraryEvent): Itiner
     }
 
     case 'leg_removed':
-      if (!canRemoveLeg(plan) || !plan.legs[event.index]) return plan;
+      if (!plan.legs[event.index] || !canRemoveLeg(plan, event.index)) return plan;
       return { ...plan, legs: plan.legs.filter((_, index) => index !== event.index) };
 
     case 'hold_started':
@@ -212,15 +246,17 @@ export function itineraryReducer(plan: Itinerary, event: ItineraryEvent): Itiner
         status: 'held',
         booking: event.result.booking,
         error: null,
-        mayBeHeld: false,
       }));
 
     case 'leg_hold_failed':
-      return updateLeg(plan, event.index, ['holding'], () => ({
+      return updateLeg(plan, event.index, ['holding'], (leg) => ({
         status: 'failed',
         error: event.error,
         alternatives: event.error.alternatives,
-        mayBeHeld: event.mayBeHeld,
+        mayBeHeld:
+          event.mayBeHeld && leg.selected
+            ? { availabilityId: leg.selected.availability_id, name: leg.selected.name, until: event.at + UNKNOWN_HOLD_MS }
+            : leg.mayBeHeld,
       }));
 
     case 'all_held':
@@ -324,5 +360,20 @@ export function itineraryReducer(plan: Itinerary, event: ItineraryEvent): Itiner
       );
       return { ...plan, legs, phase: 'ready', busy: false };
     }
+
+    case 'unknown_check_started':
+      if (plan.busy || !hasUnknownHold(plan)) return plan;
+      return { ...plan, busy: true };
+
+    case 'unknown_hold_cleared': {
+      const leg = plan.legs[event.index];
+      if (!plan.busy || !leg?.mayBeHeld) return plan;
+      const legs = plan.legs.slice();
+      legs[event.index] = { ...leg, mayBeHeld: null, note: event.note };
+      return { ...plan, legs };
+    }
+
+    case 'unknown_check_done':
+      return plan.busy ? { ...plan, busy: false } : plan;
   }
 }

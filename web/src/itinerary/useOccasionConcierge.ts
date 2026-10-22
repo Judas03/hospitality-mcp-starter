@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../booking/useBookingAgent';
 import type { Availability } from '../contract/types';
-import { BUSY } from '../conversation/replies';
+import { BUSY, negated } from '../conversation/replies';
+import { negatedAction } from '../conversation/understand';
 import type { ToolClient } from '../mcp/types';
-import { canHoldPlan, earliestExpiry, holdsBookings, itineraryReducer, startItinerary } from './flow';
+import {
+  canHoldPlan,
+  earliestExpiry,
+  hasUnknownHold,
+  holdsBookings,
+  itineraryReducer,
+  startItinerary,
+  unknownHoldsUntil,
+} from './flow';
 import * as steps from './orchestrate';
 import { parseItinerary } from './parseItinerary';
 import * as replies from './replies';
@@ -34,8 +43,10 @@ export interface Concierge {
   retrySearch(index: number): void;
   pickOption(index: number, slot: Availability): void;
   removeLeg(index: number): void;
-  /** Drops a plan that holds nothing, or puts a booked plan away. */
-  close(): void;
+  /** Looks again for a hold that got no answer, with a fresh search. */
+  checkAgain(): void;
+  /** Drops a plan that holds nothing, or puts a booked plan away. False when it can't. */
+  close(): boolean;
   show(): void;
 }
 
@@ -57,6 +68,7 @@ function taskOf(plan: Itinerary | null): PlanTask | null {
 }
 
 export function planSuggestions(plan: Itinerary): string[] | null {
+  if (hasUnknownHold(plan)) return plan.busy ? [] : ['Check the hold again'];
   switch (plan.phase) {
     case 'ready':
       return canHoldPlan(plan) ? ['Hold the whole plan', 'Drop the plan'] : ['Drop the plan'];
@@ -77,11 +89,23 @@ const YES = /^(yes|yeah|yep|yup|sure|ok|okay|please do|go ahead|do it|sounds goo
 const NO = /^(no|nope|nah|not now|never ?mind)\b/;
 const PLAN_WORDS = /\b(plan|everything|all of them|all three|both|them all|whole thing)\b/;
 
-export type Command = 'hold' | 'drop' | 'confirm' | 'cancel' | 'retry' | 'show' | 'already_booked';
+export type Command = 'hold' | 'drop' | 'confirm' | 'cancel' | 'retry' | 'show' | 'already_booked' | 'check' | 'negated';
 
-/** The plan's own commands, by phase. Anything else falls through to compound requests or the agent. */
+/** Commands that hold, confirm, cancel or drop something, so "don't …" must stop them. */
+const ACTIONS: Command[] = ['hold', 'drop', 'confirm', 'cancel', 'retry'];
+
+/**
+ * The plan's own commands, by phase. Anything else falls through to compound requests or the agent.
+ * A negated action ("Do not confirm the plan") is 'negated': it is answered and does nothing.
+ */
 export function commandFor(text: string, plan: Itinerary, open: boolean): Command | null {
+  const command = readCommand(text, plan, open);
+  return command && ACTIONS.includes(command) && negatedAction(text) ? 'negated' : command;
+}
+
+function readCommand(text: string, plan: Itinerary, open: boolean): Command | null {
   const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (hasUnknownHold(plan) && /\b(check|look)\b/.test(t)) return 'check';
   switch (plan.phase) {
     case 'ready':
       if ((/\b(drop|forget|cancel|scrap)\b/.test(t) && PLAN_WORDS.test(t)) || (open && NO.test(t))) return 'drop';
@@ -105,8 +129,13 @@ export function commandFor(text: string, plan: Itinerary, open: boolean): Comman
   }
 }
 
-/** Phases in which the plan answers every message: it holds bookings and waits for the guest. */
-const CLAIMS_ALL: Itinerary['phase'][] = ['awaiting_approval', 'cleanup_failed'];
+/**
+ * Whether the plan answers every message: it holds bookings and waits for the guest, or a hold got
+ * no answer and may still exist.
+ */
+function claimsAll(plan: Itinerary): boolean {
+  return plan.phase === 'awaiting_approval' || plan.phase === 'cleanup_failed' || hasUnknownHold(plan);
+}
 
 export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () => Date = () => new Date()): Concierge {
   const [plan, setPlan] = useState<Itinerary | null>(null);
@@ -134,12 +163,15 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
         if (planRef.current) setCurrent(itineraryReducer(planRef.current, event));
       },
       plan: () => planRef.current!,
+      now: () => Date.now(),
     };
     const say = (text: string) => agentRef.current.addMessage('assistant', text);
     /** Either flow has a tool step running. */
     const blocked = () => agentRef.current.state.busy !== null || (planRef.current?.busy ?? false);
     const afterRollback = (current: Itinerary) =>
       current.phase === 'cleanup_failed' ? replies.cleanupFailed(current) : replies.rolledBack(current);
+    const waitingFor = (current: Itinerary) =>
+      hasUnknownHold(current) ? replies.unknownHoldWaiting(current) : replies.waiting(current);
 
     /** Runs a plan step unless something else is running. */
     const step = (work: (current: Itinerary) => Promise<void> | void) => {
@@ -151,7 +183,10 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
 
     async function start(parsed: ParsedItinerary) {
       if (parsed.kind === 'unsupported') return say(replies.unsupported(parsed.reason));
-      if (planRef.current && holdsBookings(planRef.current)) return say(replies.ALREADY_PLANNED);
+      const current = planRef.current;
+      if (current && holdsBookings(current)) {
+        return say(hasUnknownHold(current) ? replies.unknownHoldWaiting(current) : replies.ALREADY_PLANNED);
+      }
       // A hold from the single-booking flow is released, and verified, before the plan starts.
       const single = agentRef.current.state.current;
       if (single?.booking.status === 'held') {
@@ -166,6 +201,7 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
 
     const holdPlan = () =>
       step(async (current) => {
+        if (hasUnknownHold(current)) return say(replies.unknownHoldWaiting(current));
         if (!canHoldPlan(current)) return say(replies.notReady(current));
         const outcome = await steps.holdPlan(run, agentRef.current.guest);
         if (outcome === 'held') say(replies.allHeld(run.plan()));
@@ -202,13 +238,17 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
         if (run.plan() !== current) say(replies.removed(leg, canHoldPlan(run.plan())));
       });
 
-    const close = () => {
+    const close = (): boolean => {
       const current = planRef.current;
-      if (!current || current.busy) return;
-      if (current.phase === 'confirmed') return setShown(false);
-      if (holdsBookings(current)) return;
+      if (!current || current.busy) return false;
+      if (current.phase === 'confirmed' && !hasUnknownHold(current)) {
+        setShown(false);
+        return true;
+      }
+      if (holdsBookings(current)) return false;
       setCurrent(null);
       setShown(false);
+      return true;
     };
 
     /** The earliest hold's time is up while waiting for approval. Silent unless something ran out. */
@@ -217,7 +257,21 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
       if ((await steps.checkHolds(run)) === 'released') say(afterRollback(run.plan()));
     }
 
-    function runCommand(command: Command) {
+    const checkAgain = () =>
+      step(async (current) => {
+        if (!hasUnknownHold(current)) return;
+        const outcome = await steps.checkUnknownHolds(run);
+        if (outcome === 'cleared') say(replies.unknownHoldCleared(run.plan()));
+        else if (outcome === 'still_unknown') say(replies.unknownHoldStill(run.plan()));
+      });
+
+    /** A hold that got no answer has certainly run out by now. Silent unless it clears. */
+    async function checkUnknownLapsed() {
+      if (!planRef.current || !hasUnknownHold(planRef.current) || blocked()) return;
+      if ((await steps.checkUnknownHolds(run)) === 'cleared') say(replies.unknownHoldCleared(run.plan()));
+    }
+
+    function runCommand(command: Command, text: string) {
       switch (command) {
         case 'hold':
           return holdPlan();
@@ -231,9 +285,15 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
           return setShown(true);
         case 'already_booked':
           return say(replies.ALREADY_BOOKED);
-        case 'drop':
-          close();
-          return say(replies.DROPPED);
+        case 'check':
+          return checkAgain();
+        case 'negated':
+          return say(negated(negatedAction(text) ?? 'do'));
+        case 'drop': {
+          const current = planRef.current;
+          if (close()) return say(replies.DROPPED);
+          return current ? say(waitingFor(current)) : undefined;
+        }
       }
     }
 
@@ -246,9 +306,9 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
       }
       if (current) {
         const command = commandFor(text, current, openRef.current);
-        if (command || CLAIMS_ALL.includes(current.phase)) {
+        if (command || claimsAll(current)) {
           agentNow.addMessage('user', text);
-          return command ? runCommand(command) : say(replies.waiting(current));
+          return command ? runCommand(command, text) : say(waitingFor(current));
         }
       }
       const parsed = parseItinerary(text, nowRef.current());
@@ -272,9 +332,19 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
       removeLeg,
       close,
       show: () => setShown(true),
+      checkAgain,
       checkExpiry,
+      checkUnknownLapsed,
     };
   }, [client]);
+
+  // Clear a hold that got no answer as soon as it has certainly run out.
+  const unknownUntil = plan && !plan.busy ? unknownHoldsUntil(plan) : null;
+  useEffect(() => {
+    if (unknownUntil === null) return;
+    const timer = window.setTimeout(() => void actions.checkUnknownLapsed(), Math.max(unknownUntil - Date.now() + 300, 0));
+    return () => window.clearTimeout(timer);
+  }, [unknownUntil, actions]);
 
   // Check the holds with the server when the earliest one is due, at most every two seconds.
   const expiresAt = plan ? (earliestExpiry(plan)?.at ?? null) : null;
@@ -303,6 +373,7 @@ export function useOccasionConcierge(client: ToolClient, agent: Agent, now: () =
     retrySearch: actions.retrySearch,
     pickOption: actions.pickOption,
     removeLeg: actions.removeLeg,
+    checkAgain: actions.checkAgain,
     close: actions.close,
     show: actions.show,
   };

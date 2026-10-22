@@ -2,9 +2,28 @@ import { describe, expect, it } from 'vitest';
 import type { BookingStatus, ToolName } from '../contract/types';
 import { DemoClient } from '../mcp/demoClient';
 import { CLIENT_ERROR_CODES, toolError } from '../mcp/result';
-import { canHoldPlan, earliestExpiry, holdsBookings, RAN_OUT_NOTE, RELEASED_NOTE, startItinerary, unresolvedLegs } from './flow';
-import { cancelPlan, checkHolds, confirmPlan, holdPlan, retryCleanup, runOver, searchLegs } from './orchestrate';
+import {
+  canHoldPlan,
+  earliestExpiry,
+  hasUnknownHold,
+  holdsBookings,
+  RAN_OUT_NOTE,
+  RELEASED_NOTE,
+  startItinerary,
+  unresolvedLegs,
+} from './flow';
+import {
+  cancelPlan,
+  checkHolds,
+  checkUnknownHolds,
+  confirmPlan,
+  holdPlan,
+  retryCleanup,
+  runOver,
+  searchLegs,
+} from './orchestrate';
 import { parseItinerary } from './parseItinerary';
+import { UNKNOWN_HOLD_FREE, UNKNOWN_HOLD_RAN_OUT } from './replies';
 import { ScriptedClient } from './testClient';
 
 // Thursday 22 October 2026, 14:00 in Bangkok.
@@ -20,7 +39,7 @@ function setup() {
   const client = new ScriptedClient(demo);
   const parsed = parseItinerary(EXAMPLE, new Date(now));
   if (parsed?.kind !== 'plan') throw new Error('example is not a plan');
-  const run = runOver(client, startItinerary(parsed));
+  const run = runOver(client, startItinerary(parsed), () => now);
   /** Another guest on the same demo data. */
   const rival = demo.withLog(() => {});
   const statusOf = async (booking_id: string): Promise<BookingStatus> => {
@@ -112,17 +131,62 @@ describe('a refused hold', () => {
 
     // The hotel has no other time, but its deluxe room is still among the leg's options.
     const hotel = run.plan().legs[2];
-    expect(hotel).toMatchObject({ status: 'failed', alternatives: [], mayBeHeld: false });
+    expect(hotel).toMatchObject({ status: 'failed', alternatives: [], mayBeHeld: null });
     run.dispatch({ type: 'option_picked', index: 2, slot: hotel.options.find((slot) => slot.room_type === 'deluxe')! });
     expect(await holdPlan(run, GUEST)).toBe('held');
   });
 
-  it('without any answer may still exist on the server, and the plan says so', async () => {
-    const { client, run } = setup();
-    client.on('create_booking_hold', 3, { fail: NO_ANSWER });
+});
+
+describe('a hold that got no answer', () => {
+  it('locks the plan until a fresh search shows the option free', async () => {
+    const { client, run, statusOf } = setup();
+    client.on('create_booking_hold', 3, { fail: NO_ANSWER }); // the request never reached the server
     await searchLegs(run);
     expect(await holdPlan(run, GUEST)).toBe('failed');
-    expect(run.plan().legs.map((leg) => leg.mayBeHeld)).toEqual([false, false, true]);
+    const plan = run.plan();
+    expect(plan.legs.map((leg) => leg.mayBeHeld?.availabilityId ?? null)).toEqual([
+      null,
+      null,
+      'avail_hotel_001_20261023_1500_standard',
+    ]);
+    expect(await statuses(statusOf, client.holds)).toEqual(['cancelled', 'cancelled']);
+    expect(holdsBookings(plan)).toBe(true);
+    expect(canHoldPlan(plan)).toBe(false);
+
+    // Another room doesn't unlock it, and holding is refused without a call to the server.
+    run.dispatch({ type: 'option_picked', index: 2, slot: plan.legs[2].options.find((slot) => slot.room_type === 'deluxe')! });
+    const holdCalls = client.argsOf('create_booking_hold').length;
+    expect(await holdPlan(run, GUEST)).toBe('refused');
+    expect(client.argsOf('create_booking_hold')).toHaveLength(holdCalls);
+
+    expect(await checkUnknownHolds(run)).toBe('cleared');
+    expect(run.plan().legs[2]).toMatchObject({ mayBeHeld: null, note: UNKNOWN_HOLD_FREE });
+    expect(holdsBookings(run.plan())).toBe(false);
+    expect(await holdPlan(run, GUEST)).toBe('held');
+  });
+
+  it('stays locked while the lost hold exists, until the hold length has passed', async () => {
+    const { client, run, statusOf, advance } = setup();
+    client.on('create_booking_hold', 3, { lose: NO_ANSWER }); // the server held it, but the answer was lost
+    await searchLegs(run);
+    expect(await holdPlan(run, GUEST)).toBe('failed');
+    const hidden = client.holds[2];
+    expect(await statusOf(hidden)).toBe('held');
+
+    expect(await checkUnknownHolds(run)).toBe('still_unknown');
+    expect(run.plan()).toMatchObject({ busy: false });
+    expect(hasUnknownHold(run.plan())).toBe(true);
+
+    advance(300);
+    const searches = client.argsOf('search_availability').length;
+    expect(await checkUnknownHolds(run)).toBe('cleared');
+    expect(client.argsOf('search_availability')).toHaveLength(searches); // the time alone clears it
+    expect(run.plan().legs[2].note).toBe(UNKNOWN_HOLD_RAN_OUT);
+    expect(await statusOf(hidden)).toBe('expired');
+    // The room is free again, so the guest can choose it and hold the plan.
+    run.dispatch({ type: 'option_picked', index: 2, slot: run.plan().legs[2].selected! });
+    expect(await holdPlan(run, GUEST)).toBe('held');
   });
 });
 

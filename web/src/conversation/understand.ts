@@ -17,6 +17,8 @@ export type Intent =
   | { kind: 'cancel' }
   | { kind: 'search_again' }
   | { kind: 'help' }
+  /** "Don't confirm it": a booking step the guest said not to do, so nothing happens. */
+  | { kind: 'negated'; action: string }
   | { kind: 'unknown' };
 
 export interface Situation {
@@ -276,7 +278,46 @@ export function searchFields(text: string, now: Date): SearchFields {
   return fields;
 }
 
+// "Don't", "do not", "never", "no need to" and the like, then up to two words, then a booking verb.
+// "Don't forget to confirm" asks for the step, so "forget" doesn't count.
+const NEGATED_ACTION = new RegExp(
+  "\\b(?:don'?t|dont|do not|never|not|no need to|won'?t|wouldn'?t|shouldn'?t|stop)\\s+(?!forget\\b)(?:\\w+\\s+){0,2}?" +
+    '(hold|book|reserve|confirm|cancel|release|drop|move|change|reschedule|make|take|pick|choose|retry)(?:ing|s|ed)?\\b',
+);
+const ACTION_WORDS: Record<string, string> = {
+  reserve: 'hold',
+  take: 'hold',
+  pick: 'hold',
+  choose: 'hold',
+  make: 'change',
+  move: 'change',
+  reschedule: 'change',
+  retry: 'release',
+  drop: 'drop',
+};
+
+/**
+ * The booking step a request says not to do ("confirm" for "Please don't confirm it yet"), or null.
+ * Shared by the single-booking flow and the Occasion Concierge, so a negated command never holds,
+ * confirms, changes or cancels anything in either.
+ */
+export function negatedAction(text: string): string | null {
+  const t = text.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, ' ');
+  const verb = t.match(NEGATED_ACTION)?.[1];
+  return verb ? (ACTION_WORDS[verb] ?? verb) : null;
+}
+
+/** Intents that hold, confirm, change or cancel something on the server. */
+const BOOKING_STEPS: Array<Intent['kind']> = ['choose', 'confirm', 'decline', 'modify', 'cancel'];
+
 export function understand(text: string, situation: Situation): Intent {
+  const intent = readIntent(text, situation);
+  if (!BOOKING_STEPS.includes(intent.kind)) return intent;
+  const action = negatedAction(text);
+  return action ? { kind: 'negated', action } : intent;
+}
+
+function readIntent(text: string, situation: Situation): Intent {
   const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!t) return { kind: 'unknown' };
   if (/^(help|what can you do|how does this work)\b/.test(t)) return { kind: 'help' };

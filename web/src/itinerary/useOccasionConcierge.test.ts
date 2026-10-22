@@ -1,8 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import type { Itinerary, PlanPhase } from './types';
+import type { Itinerary, Leg, PlanPhase } from './types';
 import { commandFor, planSuggestions, type Command } from './useOccasionConcierge';
 
 const inPhase = (phase: PlanPhase): Itinerary => ({ date: '2026-10-23', legs: [], phase, busy: false, notice: null });
+/** A plan with a leg whose hold got no answer. */
+const locked = (phase: PlanPhase): Itinerary => ({
+  ...inPhase(phase),
+  legs: [{ mayBeHeld: { availabilityId: 'avail_hotel_001_20261023_1500_standard', name: 'Chao Phraya Stay', until: 0 } } as Leg],
+});
+
+describe('commandFor: "don’t" never holds, confirms, cancels or drops anything', () => {
+  it('answers a negated command in every phase without acting on it', () => {
+    expect(commandFor('Do not hold the whole plan', inPhase('ready'), true)).toBe('negated');
+    expect(commandFor('Don’t drop the plan', inPhase('ready'), true)).toBe('negated');
+    expect(commandFor('Do not confirm the plan', inPhase('awaiting_approval'), true)).toBe('negated');
+    expect(commandFor('No, don’t confirm it yet', inPhase('awaiting_approval'), true)).toBe('negated');
+    expect(commandFor('Don’t cancel the plan', inPhase('awaiting_approval'), true)).toBe('negated');
+    expect(commandFor('Do not cancel the whole plan', inPhase('confirmed'), true)).toBe('negated');
+    expect(commandFor('Do not cancel the whole plan', inPhase('confirmed'), false)).toBe('negated');
+    expect(commandFor('Don’t retry the cleanup', inPhase('cleanup_failed'), true)).toBe('negated');
+  });
+
+  it('still acts on plain commands', () => {
+    expect(commandFor('No, cancel the plan', inPhase('awaiting_approval'), true)).toBe('cancel');
+    expect(commandFor('Yes, confirm the whole plan', inPhase('awaiting_approval'), true)).toBe('confirm');
+    expect(commandFor('Don’t forget to confirm the plan', inPhase('awaiting_approval'), true)).toBe('confirm');
+  });
+});
+
+describe('commandFor: a hold that got no answer', () => {
+  it('offers only a fresh check while the plan is locked', () => {
+    for (const phase of ['ready', 'cleanup_failed', 'cancelled'] as PlanPhase[]) {
+      const plan = locked(phase);
+      expect(planSuggestions(plan)).toEqual(['Check the hold again']);
+      expect(commandFor('Check the hold again', plan, true)).toBe('check');
+    }
+  });
+});
 
 describe('commandFor: what the plan takes from the conversation', () => {
   it('holds or drops a previewed plan, and leaves other requests to the single-booking flow', () => {

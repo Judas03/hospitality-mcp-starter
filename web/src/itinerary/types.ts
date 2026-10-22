@@ -47,8 +47,20 @@ export interface Leg {
   alternatives: Availability[];
   /** A short remark for the panel, e.g. "Released" after a rollback. */
   note: string | null;
-  /** A hold request failed without a server answer, so a hold may exist that the page can't see. */
-  mayBeHeld: boolean;
+  /**
+   * A hold request got no answer from the server, so a hold the page has no booking ID for may
+   * exist. Until it is cleared, the plan counts as holding bookings and can't be held, dropped or
+   * replaced.
+   */
+  mayBeHeld: UnknownHold | null;
+}
+
+export interface UnknownHold {
+  availabilityId: string;
+  /** The place, for messages. */
+  name: string;
+  /** Epoch milliseconds by which any such hold has run out. */
+  until: number;
 }
 
 export type PlanPhase =

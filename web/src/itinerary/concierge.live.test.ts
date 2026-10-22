@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { BookingStatus, ToolName } from '../contract/types';
 import { DemoClient } from '../mcp/demoClient';
 import { LiveClient } from '../mcp/liveClient';
+import { CLIENT_ERROR_CODES, toolError } from '../mcp/result';
 import type { ToolClient } from '../mcp/types';
 import { holdsBookings, RELEASED_NOTE, startItinerary } from './flow';
-import { cancelPlan, confirmPlan, holdPlan, runOver, searchLegs } from './orchestrate';
+import { cancelPlan, checkUnknownHolds, confirmPlan, holdPlan, runOver, searchLegs } from './orchestrate';
 import { parseItinerary } from './parseItinerary';
 import { ScriptedClient } from './testClient';
 
@@ -127,5 +128,22 @@ describe.skipIf(!MCP_TEST_URL)('Occasion Concierge against the real MCP server',
     for (const id of client.holds) expect(await statusOf(rival, id)).toBe('cancelled');
     expect(run.plan().legs[2]).toMatchObject({ status: 'failed', error: { code: 'slot_unavailable' } });
     await rival.callTool('cancel_booking', { booking_id: taken });
+  });
+
+  it('stays locked while a hold whose answer was lost exists, and unlocks once a fresh search shows the room free', async () => {
+    const { client, run } = plan();
+    client.on('create_booking_hold', 3, { lose: toolError('Failed to fetch', CLIENT_ERROR_CODES.unreachable) });
+    await searchLegs(run);
+    expect(await holdPlan(run, GUEST)).toBe('failed');
+    created.push(...client.holds);
+    const hidden = client.holds[2];
+    expect(await statusOf(rival, hidden)).toBe('held');
+    expect(holdsBookings(run.plan())).toBe(true);
+    expect(await checkUnknownHolds(run)).toBe('still_unknown');
+
+    // Once that hold is gone (cancelled here, rather than waiting five minutes), the room is free again.
+    await live.callTool('cancel_booking', { booking_id: hidden });
+    expect(await checkUnknownHolds(run)).toBe('cleared');
+    expect(holdsBookings(run.plan())).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import type { ToolArgs, ToolName, ToolOutputs } from '../contract/types';
 import { CLIENT_ERROR_CODES, toolError } from '../mcp/result';
 import type { ToolClient, ToolError, ToolOutcome } from '../mcp/types';
 import type { Guest } from '../booking/flow';
-import { itineraryReducer, releasableLegs, type ItineraryEvent } from './flow';
+import { hasUnknownHold, itineraryReducer, releasableLegs, type ItineraryEvent } from './flow';
 import * as replies from './replies';
 import type { Itinerary } from './types';
 
@@ -15,10 +15,12 @@ export interface PlanRun {
   dispatch(event: ItineraryEvent): void;
   /** The plan as it is after every dispatch so far. */
   plan(): Itinerary;
+  /** The time in epoch milliseconds. */
+  now(): number;
 }
 
 /** A run over a plain variable, for tests and scripts without React. */
-export function runOver(client: ToolClient, plan: Itinerary): PlanRun {
+export function runOver(client: ToolClient, plan: Itinerary, now: () => number = Date.now): PlanRun {
   let state = plan;
   return {
     client,
@@ -26,6 +28,7 @@ export function runOver(client: ToolClient, plan: Itinerary): PlanRun {
       state = itineraryReducer(state, event);
     },
     plan: () => state,
+    now,
   };
 }
 
@@ -78,7 +81,13 @@ export async function holdPlan(run: PlanRun, guest: Guest): Promise<'held' | 'fa
       party_size: slot.party_size,
     });
     if (!out.ok) {
-      run.dispatch({ type: 'leg_hold_failed', index, error: out.error, mayBeHeld: NO_ANSWER.has(out.error.code) });
+      run.dispatch({
+        type: 'leg_hold_failed',
+        index,
+        error: out.error,
+        mayBeHeld: NO_ANSWER.has(out.error.code),
+        at: run.now(),
+      });
       await rollBack(run, replies.holdFailed(leg, out.error));
       return 'failed';
     }
@@ -162,6 +171,30 @@ async function finishRelease(run: PlanRun): Promise<'cancelled' | 'cleanup_faile
   await releaseLegs(run);
   run.dispatch({ type: 'release_done' });
   return run.plan().phase === 'cancelled' ? 'cancelled' : 'cleanup_failed';
+}
+
+/**
+ * Clear holds that got no answer, the only two ways the page can be sure none is left: the hold
+ * length has passed, or a fresh search shows that exact option free (the server leaves out any
+ * option someone holds or has booked). Otherwise the plan stays locked.
+ */
+export async function checkUnknownHolds(run: PlanRun): Promise<'cleared' | 'still_unknown' | 'refused'> {
+  run.dispatch({ type: 'unknown_check_started' });
+  if (!run.plan().busy || !hasUnknownHold(run.plan())) return 'refused';
+  for (const [index, leg] of run.plan().legs.entries()) {
+    const hold = leg.mayBeHeld;
+    if (!hold) continue;
+    if (run.now() >= hold.until) {
+      run.dispatch({ type: 'unknown_hold_cleared', index, note: replies.UNKNOWN_HOLD_RAN_OUT });
+      continue;
+    }
+    const out = await call(run, 'search_availability', leg.search);
+    if (out.ok && out.data.results.some((option) => option.availability_id === hold.availabilityId)) {
+      run.dispatch({ type: 'unknown_hold_cleared', index, note: replies.UNKNOWN_HOLD_FREE });
+    }
+  }
+  run.dispatch({ type: 'unknown_check_done' });
+  return hasUnknownHold(run.plan()) ? 'still_unknown' : 'cleared';
 }
 
 async function rollBack(run: PlanRun, notice: string) {

@@ -102,6 +102,26 @@ describe('understand: the conversation around a booking', () => {
     expect(understand('Riverside please', results)).toEqual({ kind: 'choose', index: 1 });
   });
 
+  it('does nothing when told not to hold, confirm, change, release or cancel', () => {
+    expect(understand('Don’t hold the first one', results)).toEqual({ kind: 'negated', action: 'hold' });
+    expect(understand("Don't confirm it", holding)).toEqual({ kind: 'negated', action: 'confirm' });
+    expect(understand('Do not confirm', holding)).toEqual({ kind: 'negated', action: 'confirm' });
+    expect(understand('Please don’t confirm it yet', holding)).toEqual({ kind: 'negated', action: 'confirm' });
+    expect(understand('No, don’t release it', holding)).toEqual({ kind: 'negated', action: 'release' });
+    expect(understand("Don't move it to 8 PM", booked)).toEqual({ kind: 'negated', action: 'change' });
+    expect(understand('Do not make it 3 people', booked)).toEqual({ kind: 'negated', action: 'change' });
+    expect(understand('I don’t want to cancel my booking', booked)).toEqual({ kind: 'negated', action: 'cancel' });
+    expect(understand('Never cancel it', booked)).toEqual({ kind: 'negated', action: 'cancel' });
+  });
+
+  it('still acts on requests that only mention "no" or "not"', () => {
+    expect(understand('No, release it', holding)).toEqual({ kind: 'decline' });
+    expect(understand('Cancel it, I don’t need it any more', booked)).toEqual({ kind: 'cancel' });
+    expect(understand('Don’t forget to confirm it', holding)).toEqual({ kind: 'confirm' });
+    expect(understand('Hold the 7:30 PM one, not the 7 PM one', results)).toMatchObject({ kind: 'choose', time: '19:30' });
+    expect(understand('Find a table for 2 tomorrow, not outdoors', idle).kind).toBe('search');
+  });
+
   it('picks a time, with or without a place', () => {
     expect(understand('Hold the 7:30 PM one', results)).toEqual({ kind: 'choose', index: null, time: '19:30' });
     expect(understand('Hold the first one at 6:30 pm', results)).toEqual({ kind: 'choose', index: 0, time: '18:30' });

@@ -3,12 +3,14 @@ import type { Availability, Booking, BookingResult, ProviderType } from '../cont
 import { toolError } from '../mcp/result';
 import {
   canHoldPlan,
+  canRemoveLeg,
   defaultOption,
   earliestExpiry,
   holdsBookings,
   itineraryReducer,
   RELEASED_NOTE,
   startItinerary,
+  UNKNOWN_HOLD_MS,
   type ItineraryEvent,
 } from './flow';
 import { parseItinerary } from './parseItinerary';
@@ -184,6 +186,59 @@ describe('itineraryReducer: steps happen only in their phase', () => {
   it('shows the hold that runs out first', () => {
     const held = heldPlan();
     expect(earliestExpiry(held)).toEqual({ at: Date.parse('2026-10-22T07:03:00Z'), leg: held.legs[2] });
+  });
+});
+
+describe('itineraryReducer: a hold that got no answer', () => {
+  /** The table's hold got no answer; the manicure's hold was released by the rollback. */
+  function lockedPlan(): Itinerary {
+    const ready = readyPlan();
+    return apply(
+      ready,
+      { type: 'hold_started' },
+      { type: 'leg_hold_started', index: 0 },
+      { type: 'leg_held', index: 0, result: result(ready.legs[0].selected!, 'held', '2026-10-22T07:05:00Z') },
+      { type: 'leg_hold_started', index: 1 },
+      { type: 'leg_hold_failed', index: 1, error: toolError('Failed to fetch', 'server_unreachable'), mayBeHeld: true, at: 1_000 },
+      { type: 'rollback_started', notice: 'The table couldn’t be held.' },
+      { type: 'leg_release_started', index: 0 },
+      { type: 'leg_released', index: 0, result: result(ready.legs[0].selected!, 'cancelled') },
+      { type: 'release_done' },
+    );
+  }
+
+  it('counts as holding a booking, so the plan can’t be held again, around it or after a new pick', () => {
+    const plan = lockedPlan();
+    expect(plan.phase).toBe('ready');
+    expect(plan.legs[1].mayBeHeld).toEqual({
+      availabilityId: OPTIONS[1][0].availability_id,
+      name: 'rest_001',
+      until: 1_000 + UNKNOWN_HOLD_MS,
+    });
+    expect(holdsBookings(plan)).toBe(true);
+    expect(canHoldPlan(plan)).toBe(false);
+
+    const picked = apply(plan, { type: 'option_picked', index: 1, slot: OPTIONS[1][1] });
+    expect(picked.legs[1].mayBeHeld).not.toBeNull();
+    expect(holdsBookings(picked)).toBe(true);
+    expect(canHoldPlan(picked)).toBe(false);
+    expect(apply(picked, { type: 'hold_started' })).toBe(picked);
+    expect(canRemoveLeg(picked, 1)).toBe(false);
+    expect(apply(picked, { type: 'leg_removed', index: 1 })).toBe(picked);
+  });
+
+  it('unlocks only when a check clears it', () => {
+    const plan = apply(lockedPlan(), { type: 'option_picked', index: 1, slot: OPTIONS[1][1] });
+    expect(apply(plan, { type: 'unknown_hold_cleared', index: 1, note: 'Cleared' })).toBe(plan);
+    const cleared = apply(
+      plan,
+      { type: 'unknown_check_started' },
+      { type: 'unknown_hold_cleared', index: 1, note: 'Cleared' },
+      { type: 'unknown_check_done' },
+    );
+    expect(cleared.legs[1]).toMatchObject({ mayBeHeld: null, note: 'Cleared' });
+    expect(holdsBookings(cleared)).toBe(false);
+    expect(canHoldPlan(cleared)).toBe(true);
   });
 });
 

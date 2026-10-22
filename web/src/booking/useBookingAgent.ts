@@ -321,6 +321,8 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
           return;
         case 'help':
           return say(replies.HELP);
+        case 'negated':
+          return say(replies.negated(intent.action));
         case 'unknown':
           return say(replies.UNKNOWN);
       }

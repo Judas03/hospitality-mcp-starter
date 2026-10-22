@@ -1,8 +1,8 @@
 import { describeSearch } from '../conversation/replies';
 import { formatDate, formatTime } from '../lib/time';
 import type { ToolError } from '../mcp/types';
-import { earliestExpiry, RELEASED_NOTE, unresolvedLegs } from './flow';
-import type { Itinerary, Leg } from './types';
+import { canHoldPlan, earliestExpiry, RELEASED_NOTE, unresolvedLegs } from './flow';
+import type { Itinerary, Leg, UnknownHold } from './types';
 
 // What the concierge says. Notices explain the last failure on the panel; chat replies follow it.
 
@@ -69,8 +69,38 @@ export function stillActive(status: string): string {
 
 // Chat replies.
 
-export const UNKNOWN_HOLD =
-  'No answer came back for that hold, so it may stay on the server until it runs out on its own.';
+const clockAt = (epochMs: number) => formatTime(new Date(epochMs).toISOString());
+
+/** A hold that got no answer, as the panel and the chat describe it. */
+export function unknownHold(hold: UnknownHold): string {
+  return `No answer came back for the hold at ${hold.name}, so it may still be on the server until ${clockAt(hold.until)}. The plan stays locked until then.`;
+}
+
+export const UNKNOWN_HOLD_RAN_OUT = 'The hold that got no answer has run out by now.';
+export const UNKNOWN_HOLD_FREE = 'A fresh search shows this option free, so no hold is left on it.';
+
+/** The reply to anything else while a hold that got no answer may still exist. */
+export function unknownHoldWaiting(plan: Itinerary): string {
+  const hold = plan.legs.find((leg) => leg.mayBeHeld)?.mayBeHeld;
+  if (!hold) return waiting(plan);
+  return `The hold at ${hold.name} got no answer, so it may still exist until ${clockAt(hold.until)}. Nothing else can start until that’s cleared. Say “check again” to look now.`;
+}
+
+export function unknownHoldCleared(plan: Itinerary): string {
+  const next = canHoldPlan(plan)
+    ? ' Shall I hold the plan again?'
+    : plan.phase === 'ready'
+      ? ' Pick an option for every part, then hold the plan again.'
+      : '';
+  return `The hold that got no answer is cleared: nothing is left on the server.${next}`;
+}
+
+export function unknownHoldStill(plan: Itinerary): string {
+  const hold = plan.legs.find((leg) => leg.mayBeHeld)?.mayBeHeld;
+  if (!hold) return unknownHoldCleared(plan);
+  return `I still can’t tell whether the hold at ${hold.name} exists: that option isn’t free in a fresh search. It will have run out by ${clockAt(hold.until)}, and I’ll check again then.`;
+}
+
 export const DROPPED = 'Okay, I dropped the plan. Nothing was held.';
 export const ALREADY_PLANNED =
   'You already have a booked plan. Cancel it first if you want to plan something else, or ask for a single booking.';
@@ -109,7 +139,9 @@ export function rolledBack(plan: Itinerary): string {
       `I released ${listJoin(released.map(describeLeg))}, and the server confirmed ${released.length === 1 ? 'it is' : 'they are'} no longer held.`,
     );
   }
-  if (plan.legs.some((leg) => leg.mayBeHeld)) parts.push(UNKNOWN_HOLD);
+  // A hold that got no answer locks the plan, so there is nothing to pick or hold yet.
+  const unknown = plan.legs.find((leg) => leg.mayBeHeld)?.mayBeHeld;
+  if (unknown) return [...parts, unknownHold(unknown), 'Say “check again” to look sooner.'].join(' ');
   const failed = plan.legs.find((leg) => leg.status === 'failed');
   if (failed && failed.alternatives.length > 0) {
     const times = failed.alternatives.map((slot) => formatTime(slot.start_time));

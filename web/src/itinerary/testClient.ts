@@ -4,7 +4,12 @@ import type { ServerInfo, ToolClient, ToolError, ToolOutcome } from '../mcp/type
 // For tests: wraps a real client (demo or live), records every call in order, and can fail or
 // act after a chosen call.
 
-export type Rule = { fail?: ToolError; after?: () => void };
+/**
+ * `fail`: answer with this error instead of calling the server. `lose`: call the server, then answer
+ * with this error, as when a request arrives but its answer never comes back. `after`: run once the
+ * real call is done.
+ */
+export type Rule = { fail?: ToolError; lose?: ToolError; after?: () => void };
 
 export class ScriptedClient implements ToolClient {
   readonly mode: ToolClient['mode'];
@@ -51,6 +56,6 @@ export class ScriptedClient implements ToolClient {
     const out = await this.inner.callTool(name, args);
     if (out.ok && name === 'create_booking_hold') this.holds.push((out.data as ToolOutputs['create_booking_hold']).booking.booking_id);
     rule?.after?.();
-    return out;
+    return rule?.lose ? { ok: false, error: rule.lose } : out;
   }
 }

@@ -2,8 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import type { Availability } from '../contract/types';
 import { describeSearch } from '../conversation/replies';
 import { useNow } from '../hooks/useNow';
-import { canConfirmPlan, canHoldPlan, canRemoveLeg, earliestExpiry, unresolvedLegs } from '../itinerary/flow';
-import { describeLeg, legKind, UNKNOWN_HOLD } from '../itinerary/replies';
+import {
+  canConfirmPlan,
+  canHoldPlan,
+  canRemoveLeg,
+  earliestExpiry,
+  hasUnknownHold,
+  holdsBookings,
+  unresolvedLegs,
+} from '../itinerary/flow';
+import { describeLeg, legKind, unknownHold } from '../itinerary/replies';
 import type { Itinerary, Leg, LegStatus, PlanPhase } from '../itinerary/types';
 import type { Concierge } from '../itinerary/useOccasionConcierge';
 import { partyLabel, priceLabel } from '../lib/format';
@@ -174,9 +182,14 @@ function LegCard({
         </p>
       )}
       {leg.mayBeHeld && (
-        <p className="note" data-tone="warn">
-          {UNKNOWN_HOLD}
-        </p>
+        <div className="notice" data-tone="warn" role="status">
+          <p>{unknownHold(leg.mayBeHeld)}</p>
+          <div className="actions">
+            <button type="button" className="btn secondary small" onClick={concierge.checkAgain} disabled={busy}>
+              Check again
+            </button>
+          </div>
+        </div>
       )}
       {editable && leg.alternatives.length > 0 && (
         <ul className="alternatives" aria-label={`Alternatives for the ${legKind(leg)}`}>
@@ -216,7 +229,7 @@ function LegCard({
           <button type="button" className="btn secondary small" onClick={() => concierge.retrySearch(index)}>
             Search again
           </button>
-          {canRemoveLeg(plan) && (
+          {canRemoveLeg(plan, index) && (
             <button type="button" className="btn ghost small" onClick={() => concierge.removeLeg(index)}>
               Remove from plan
             </button>
@@ -229,6 +242,8 @@ function LegCard({
 
 function PlanActions({ plan, busy, concierge }: { plan: Itinerary; busy: boolean; concierge: Concierge }) {
   const [askingCancel, setAskingCancel] = useState(false);
+  // A hold that got no answer may still exist, so the plan can't be held, dropped or closed yet.
+  const locked = hasUnknownHold(plan);
   switch (plan.phase) {
     case 'ready':
       return (
@@ -237,11 +252,15 @@ function PlanActions({ plan, busy, concierge }: { plan: Itinerary; busy: boolean
             <button type="button" className="btn primary" onClick={concierge.holdPlan} disabled={busy || !canHoldPlan(plan)}>
               Hold whole plan
             </button>
-            <button type="button" className="btn ghost" onClick={concierge.close} disabled={busy}>
+            <button type="button" className="btn ghost" onClick={concierge.close} disabled={busy || holdsBookings(plan)}>
               Drop plan
             </button>
           </div>
-          <p className="note">Nothing is held until you choose Hold whole plan.</p>
+          <p className="note">
+            {locked
+              ? 'The plan stays locked until the hold that got no answer is cleared.'
+              : 'Nothing is held until you choose Hold whole plan.'}
+          </p>
         </>
       );
     case 'awaiting_approval':
@@ -290,7 +309,7 @@ function PlanActions({ plan, busy, concierge }: { plan: Itinerary; busy: boolean
     case 'cancelled':
       return (
         <div className="actions">
-          <button type="button" className="btn ghost" onClick={concierge.close} disabled={busy}>
+          <button type="button" className="btn ghost" onClick={concierge.close} disabled={busy || locked}>
             Close
           </button>
         </div>
