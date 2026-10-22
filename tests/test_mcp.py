@@ -189,3 +189,92 @@ async def test_mcp_lifecycle_errors_and_idempotency(
         )
         assert expired_confirmation.is_error is True
         assert expired_confirmation.structured_content["error"]["code"] == "hold_expired"
+
+
+@pytest.mark.asyncio
+async def test_occasion_itinerary_uses_three_independent_mcp_bookings(
+    service: ReservationService,
+) -> None:
+    mcp = create_mcp_server(service)
+    searches = [
+        {
+            "provider_type": "salon",
+            "location": "Bangkok",
+            "date": date(2026, 10, 23).isoformat(),
+            "time": "15:00:00",
+            "party_size": 1,
+            "service_type": "manicure",
+            "preferences": [],
+        },
+        {
+            "provider_type": "restaurant",
+            "location": "Bangkok",
+            "date": date(2026, 10, 23).isoformat(),
+            "time": "19:00:00",
+            "party_size": 2,
+            "preferences": ["quiet"],
+        },
+        {
+            "provider_type": "hotel",
+            "location": "Bangkok",
+            "date": date(2026, 10, 23).isoformat(),
+            "time": "15:00:00",
+            "party_size": 2,
+            "preferences": ["river view"],
+        },
+    ]
+
+    async with Client(mcp, mode="legacy") as client:
+        selected = []
+        for search in searches:
+            response = await client.call_tool("search_availability", search)
+            assert response.is_error is False
+            assert response.structured_content["results"]
+            selected.append(response.structured_content["results"][0])
+
+        assert [option["provider_type"] for option in selected] == [
+            "salon",
+            "restaurant",
+            "hotel",
+        ]
+
+        booking_ids = []
+        for option, party_size in zip(selected, (1, 2, 2), strict=True):
+            held = await client.call_tool(
+                "create_booking_hold",
+                {
+                    "availability_id": option["availability_id"],
+                    "guest_name": "Occasion Guest",
+                    "guest_contact": "occasion@example.com",
+                    "party_size": party_size,
+                },
+            )
+            assert held.is_error is False
+            assert held.structured_content["booking"]["status"] == "held"
+            booking_ids.append(held.structured_content["booking"]["booking_id"])
+
+        assert len(set(booking_ids)) == 3
+
+        for booking_id in booking_ids:
+            current = await client.call_tool("get_booking", {"booking_id": booking_id})
+            assert current.is_error is False
+            assert current.structured_content["booking"]["status"] == "held"
+
+        for booking_id in booking_ids:
+            confirmed = await client.call_tool(
+                "confirm_booking",
+                {"booking_id": booking_id, "user_confirmed": True},
+            )
+            assert confirmed.is_error is False
+            assert confirmed.structured_content["booking"]["status"] == "confirmed"
+
+        for booking_id in booking_ids:
+            cancelled = await client.call_tool(
+                "cancel_booking", {"booking_id": booking_id}
+            )
+            repeated = await client.call_tool(
+                "cancel_booking", {"booking_id": booking_id}
+            )
+            assert cancelled.is_error is False
+            assert repeated.is_error is False
+            assert repeated.structured_content["booking"]["status"] == "cancelled"

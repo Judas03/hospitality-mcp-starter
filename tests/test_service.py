@@ -46,6 +46,52 @@ def hold_first_restaurant(service: ReservationService):
     )
 
 
+def occasion_options(service: ReservationService):
+    """The three legs used by the public Occasion Concierge demo."""
+    salon = service.search_availability(
+        SearchAvailabilityRequest(
+            provider_type=ProviderType.SALON,
+            location="Bangkok",
+            date=DEMO_DATE,
+            time=time(15, 0),
+            party_size=1,
+            service_type="manicure",
+        )
+    ).results[0]
+    restaurant = restaurant_search(service).results[0]
+    hotel = service.search_availability(
+        SearchAvailabilityRequest(
+            provider_type=ProviderType.HOTEL,
+            location="Bangkok",
+            date=DEMO_DATE,
+            time=time(15, 0),
+            party_size=2,
+            preferences=["river view"],
+        )
+    ).results[0]
+    return {
+        ProviderType.SALON: salon,
+        ProviderType.RESTAURANT: restaurant,
+        ProviderType.HOTEL: hotel,
+    }
+
+
+def hold_option(
+    service: ReservationService,
+    option,
+    *,
+    guest_name: str = "Occasion Guest",
+):
+    return service.create_booking_hold(
+        CreateBookingHoldRequest(
+            availability_id=option.availability_id,
+            guest_name=guest_name,
+            guest_contact="occasion@example.com",
+            party_size=option.party_size,
+        )
+    )
+
+
 def test_complete_restaurant_flow_is_explicit_and_idempotent(
     service: ReservationService,
 ) -> None:
@@ -310,3 +356,100 @@ def test_unknown_ids_and_cross_provider_modification_return_clear_errors(
             )
         )
     assert cross_provider.value.response.error.code == BusinessErrorCode.INVALID_STATE
+
+
+def test_occasion_legs_can_be_held_confirmed_and_cancelled_independently(
+    service: ReservationService,
+) -> None:
+    options = occasion_options(service)
+    assert options[ProviderType.SALON].service_type == "manicure"
+    assert options[ProviderType.SALON].start_time.hour == 15
+    assert options[ProviderType.RESTAURANT].start_time.hour == 19
+    assert "quiet" in options[ProviderType.RESTAURANT].reason.lower()
+    assert options[ProviderType.HOTEL].start_time.hour == 15
+    assert "Chao Phraya Stay" == options[ProviderType.HOTEL].name
+
+    held = {
+        provider: hold_option(service, option).booking
+        for provider, option in options.items()
+    }
+    assert set(held) == set(ProviderType)
+    assert {booking.status for booking in held.values()} == {BookingStatus.HELD}
+    assert len({booking.booking_id for booking in held.values()}) == 3
+
+    confirmed = {
+        provider: service.confirm_booking(
+            ConfirmBookingRequest(
+                booking_id=booking.booking_id,
+                user_confirmed=True,
+            )
+        ).booking
+        for provider, booking in held.items()
+    }
+    assert {booking.status for booking in confirmed.values()} == {
+        BookingStatus.CONFIRMED
+    }
+
+    for booking in confirmed.values():
+        first = service.cancel_booking(BookingIdRequest(booking_id=booking.booking_id))
+        repeated = service.cancel_booking(BookingIdRequest(booking_id=booking.booking_id))
+        assert first.booking.status == BookingStatus.CANCELLED
+        assert repeated.booking.status == BookingStatus.CANCELLED
+
+
+def test_failed_occasion_leg_can_compensate_every_prior_hold(
+    service: ReservationService,
+) -> None:
+    options = occasion_options(service)
+    rival = hold_option(
+        service,
+        options[ProviderType.HOTEL],
+        guest_name="Another Guest",
+    )
+    earlier_holds = [
+        hold_option(service, options[ProviderType.SALON]),
+        hold_option(service, options[ProviderType.RESTAURANT]),
+    ]
+
+    with pytest.raises(BusinessError) as failed_hotel:
+        hold_option(service, options[ProviderType.HOTEL])
+    assert failed_hotel.value.response.error.code == BusinessErrorCode.SLOT_UNAVAILABLE
+    assert failed_hotel.value.response.error.retryable is True
+
+    for held in earlier_holds:
+        cancelled = service.cancel_booking(
+            BookingIdRequest(booking_id=held.booking.booking_id)
+        )
+        repeated = service.cancel_booking(
+            BookingIdRequest(booking_id=held.booking.booking_id)
+        )
+        assert cancelled.booking.status == BookingStatus.CANCELLED
+        assert repeated.booking.status == BookingStatus.CANCELLED
+
+    assert service.get_booking(
+        BookingIdRequest(booking_id=rival.booking.booking_id)
+    ).booking.status == BookingStatus.HELD
+
+
+def test_one_occasion_hold_can_expire_without_changing_other_legs(
+    service: ReservationService,
+    clock: MutableClock,
+) -> None:
+    options = occasion_options(service)
+    salon = hold_option(service, options[ProviderType.SALON]).booking
+    clock.advance(seconds=200)
+    restaurant = hold_option(service, options[ProviderType.RESTAURANT]).booking
+    hotel = hold_option(service, options[ProviderType.HOTEL]).booking
+    clock.advance(seconds=101)
+
+    statuses = {
+        booking.provider_type: service.get_booking(
+            BookingIdRequest(booking_id=booking.booking_id)
+        ).booking.status
+        for booking in (salon, restaurant, hotel)
+    }
+    assert statuses == {
+        ProviderType.SALON: BookingStatus.EXPIRED,
+        ProviderType.RESTAURANT: BookingStatus.HELD,
+        ProviderType.HOTEL: BookingStatus.HELD,
+    }
