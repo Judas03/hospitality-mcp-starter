@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { BookingStatus, ToolArgs, ToolName, ToolOutputs } from '../contract/types';
+import type { BookingStatus, ToolName } from '../contract/types';
 import { DemoClient } from '../mcp/demoClient';
 import { CLIENT_ERROR_CODES, toolError } from '../mcp/result';
-import type { ServerInfo, ToolClient, ToolError, ToolOutcome } from '../mcp/types';
 import { canHoldPlan, earliestExpiry, holdsBookings, RAN_OUT_NOTE, RELEASED_NOTE, startItinerary, unresolvedLegs } from './flow';
 import { cancelPlan, checkHolds, confirmPlan, holdPlan, retryCleanup, runOver, searchLegs } from './orchestrate';
 import { parseItinerary } from './parseItinerary';
+import { ScriptedClient } from './testClient';
 
 // Thursday 22 October 2026, 14:00 in Bangkok.
 const START = Date.parse('2026-10-22T07:00:00Z');
@@ -13,55 +13,6 @@ const EXAMPLE =
   'Plan my anniversary tomorrow in Bangkok: a manicure for me at 3 PM, a quiet dinner for two at 7 PM, and a river-view hotel for two.';
 const GUEST = { guest_name: 'Demo Guest', guest_contact: 'demo@example.com' };
 const NO_ANSWER = toolError('Failed to fetch', CLIENT_ERROR_CODES.unreachable);
-
-type Rule = { fail?: ToolError; after?: () => void };
-
-/** Demo data with failures injected at chosen calls, recording every call in order. */
-class ScriptedClient implements ToolClient {
-  readonly mode = 'demo' as const;
-  readonly endpoint = null;
-  readonly calls: Array<{ name: ToolName; args: unknown }> = [];
-  /** Booking IDs of every hold the server created, in order. */
-  readonly holds: string[] = [];
-  private readonly rules = new Map<string, Rule>();
-  private readonly counts = new Map<ToolName, number>();
-
-  constructor(private readonly inner: ToolClient) {}
-
-  /** What the nth call of this tool (counting from 1) does instead of, or after, the real call. */
-  on(name: ToolName, nth: number, rule: Rule) {
-    this.rules.set(`${name}#${nth}`, rule);
-    return this;
-  }
-
-  names() {
-    return this.calls.map((call) => call.name);
-  }
-
-  argsOf<N extends ToolName>(name: N): Array<ToolArgs[N]> {
-    return this.calls.filter((call) => call.name === name).map((call) => call.args as ToolArgs[N]);
-  }
-
-  connect(): Promise<ServerInfo> {
-    return this.inner.connect();
-  }
-
-  close(): Promise<void> {
-    return this.inner.close();
-  }
-
-  async callTool<N extends ToolName>(name: N, args: ToolArgs[N]): Promise<ToolOutcome<ToolOutputs[N]>> {
-    this.calls.push({ name, args });
-    const nth = (this.counts.get(name) ?? 0) + 1;
-    this.counts.set(name, nth);
-    const rule = this.rules.get(`${name}#${nth}`);
-    if (rule?.fail) return { ok: false, error: rule.fail };
-    const out = await this.inner.callTool(name, args);
-    if (out.ok && name === 'create_booking_hold') this.holds.push((out.data as ToolOutputs['create_booking_hold']).booking.booking_id);
-    rule?.after?.();
-    return out;
-  }
-}
 
 function setup() {
   let now = START;
