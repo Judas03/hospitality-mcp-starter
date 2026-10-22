@@ -14,4 +14,4 @@ echo "Backend is ready. Start it with:"
 echo "  source .venv/bin/activate && python -m server.mcp_server"
 echo
 echo "In another terminal, start the web app with:"
-echo "  cd web && npm install && npm run dev"
+echo "  cd web && npm ci && npm run dev"

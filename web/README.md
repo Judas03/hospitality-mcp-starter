@@ -7,7 +7,7 @@ then `tools/list` and `tools/call`) and shows every message in the MCP activity 
 ## Run
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -58,24 +58,13 @@ Nothing is sent, held, confirmed or cancelled by voice alone, and Escape throws 
   processed by the browser vendor's speech service and depends on that browser's microphone
   permission, availability and network. Typing always works.
 
-## Recording the demo
+## Guided walkthrough
 
-Open the page with `?script=main` (add `&mode=demo` to run without the server). The only
-suggestion is the next line of the script, so one click per step plays the whole story:
-
-1. Find a quiet restaurant for two tomorrow at 7 PM
-2. Hold the first one: just before this, another guest holds that 7:00 PM table through a
-   second MCP session, so the hold fails and the server offers 6:30 or 7:30
-3. Hold the 7:30 PM one
-4. Yes, confirm it
-5. Move it to 8 PM
-6. Make it 3 people
-7. Cancel my booking
-
-The other guest's tool call is tagged "Another guest" in the activity panel, and the newest tool
-call opens by itself so its arguments and result are on screen. The mode switch is hidden while
-scripting. To record again against the live server, reload the same tab: it first cancels the
-bookings the last take made, so the same slots are free.
+Open the page with `?script=main` (add `&mode=demo` to run without the server). A single
+suggestion at a time demonstrates search, a real slot conflict from a second MCP session,
+alternatives, hold, explicit confirmation, modification, and cancellation. The activity panel
+shows each protocol message and tool call. Reloading the same tab cleans up the walkthrough's
+bookings before starting again.
 
 ## Check
 

@@ -10,3 +10,9 @@ data/*.db-wal
 data/*.sqlite
 data/*.sqlite3
 .DS_Store
+
+# Private planning and submission notes
+PROJECT_PLAN.md
+docs/*-task-plan.md
+docs/submission-checklist.md
+docs/demo-script.md

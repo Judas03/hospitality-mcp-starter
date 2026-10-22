@@ -1,24 +1,30 @@
-# Hospitality Reservation MCP
+# Hospitality Concierge MCP
 
-An Alexa-style reservation assistant for restaurants, salons, and hotels, built on the Model Context Protocol (MCP). A React client turns conversational requests into real MCP calls while a Python service manages availability, temporary holds, confirmations, modifications, cancellations, and conflicts.
+An Alexa-style hospitality concierge that searches and books restaurants, salons, and hotels through the Model Context Protocol (MCP). A React client turns conversational requests into real MCP tool calls while a Python service manages availability, temporary holds, confirmations, modifications, cancellations, and conflicts.
 
-## What the demo proves
+The assistant can handle one reservation or build an **Occasion Concierge** plan containing multiple reservations for the same day. Push-to-talk voice input is available in supported browsers, and every MCP request and response is visible in the activity panel.
+
+This repository demonstrates a self-hosted MCP integration through a simulated Alexa+ web experience. It does not claim a connection to the production Alexa+ service, use real provider inventory, or process payments.
+
+## What it demonstrates
 
 - One shared reservation workflow works across three hospitality provider types.
+- One request can create a coordinated salon, restaurant, and hotel itinerary.
 - The browser uses the official MCP TypeScript SDK and visibly shows `initialize`, `tools/list`, and `tools/call` traffic.
 - The Python server uses the official MCP SDK with Streamable HTTP.
 - A reservation is never confirmed without explicit user approval.
 - Holds expire, conflicts return nearby alternatives, and modifications are atomic.
+- Multi-part plans release earlier holds if a later part fails.
+- Push-to-talk fills the message box for review; voice alone never books or cancels anything.
 - Deterministic synthetic data makes the complete scenario repeatable.
-
-This repository demonstrates a self-hosted MCP integration through an Alexa-style web experience. It does not claim a connection to the production Alexa+ service.
 
 ## Architecture
 
 ```text
 React web simulator
-  ├─ conversational request parser
-  ├─ booking workflow and activity log
+  ├─ deterministic conversational request parser
+  ├─ single-booking and Occasion Concierge workflows
+  ├─ push-to-talk input and MCP activity log
   └─ official MCP TypeScript client
                     │
                     │ Streamable HTTP (/mcp)
@@ -52,7 +58,7 @@ The complete schemas and error behavior are documented in [`docs/mcp-contract.md
 
 No external API key is required. All listings and guest details used by the demo are synthetic.
 
-## Run locally
+## Quick start
 
 Create the Python environment and install the project dependencies:
 
@@ -85,13 +91,34 @@ npm run dev
 
 Open `http://127.0.0.1:5173`.
 
+Try requests such as:
+
+- `Find a quiet restaurant for two tomorrow at 7 PM`
+- `Book a haircut for one tomorrow at 1 PM`
+- `Find a river-view hotel for two tomorrow`
+- `Plan my anniversary tomorrow: a manicure at 3 PM, a quiet dinner for two at 7 PM, and a river-view hotel`
+
+For a single reservation, choose an option, create a temporary hold, and explicitly confirm it. For a multi-part request, review the Occasion Concierge panel, hold the whole plan, and then confirm the whole plan. You can modify or cancel a single booking and cancel an entire plan.
+
+The microphone button uses the browser's speech-recognition support. It only transcribes speech into the message box; review the text and press Send to continue. Typing remains available when speech recognition is unsupported.
+
 ## Demo modes
 
 - `http://127.0.0.1:5173/` uses the live Python MCP server.
-- `http://127.0.0.1:5173/?script=main` runs the guided seven-step hackathon scenario against the live server.
+- `http://127.0.0.1:5173/?script=main` runs a guided booking walkthrough against the live server.
 - `http://127.0.0.1:5173/?mode=demo` uses deterministic in-browser data when a server is unavailable. The interface labels this mode clearly.
 
-The guided scenario demonstrates search, a competing guest conflict, alternatives, hold, explicit confirmation, two modifications, and cancellation. Recording guidance is available in [`docs/demo-script.md`](docs/demo-script.md).
+The guided walkthrough demonstrates search, a competing guest conflict, alternatives, hold, explicit confirmation, modification, and cancellation. Live mode is the primary integration path; browser-only demo mode is a clearly labeled fallback.
+
+## How the booking flow stays safe
+
+- Search results do not create a booking.
+- A hold temporarily reserves a slot and expires automatically.
+- Confirmation requires a live hold and `user_confirmed: true`.
+- Duplicate confirmation and cancellation requests are safe.
+- Conflicting holds return a stable error and nearby alternatives.
+- A failed modification leaves the original confirmed booking unchanged.
+- Occasion Concierge verifies every hold before confirmation and performs compensating cancellation if a multi-part operation fails.
 
 ## Configuration
 
@@ -151,6 +178,15 @@ The live suite verifies protocol negotiation, the seven-tool inventory, restaura
 
 Runtime state is stored in `data/hospitality.db`. Use only disposable demo information when running this project.
 
+## Scope and limitations
+
+- Provider inventory is deterministic sample data behind replaceable restaurant, salon, and hotel adapters.
+- The conversational parser is deterministic and intentionally supports a focused set of booking phrases; it is not a general-purpose language model.
+- Browser speech recognition availability and processing depend on the browser vendor.
+- SQLite is appropriate for this single-instance demonstration, not a horizontally scaled production deployment.
+- The local server has no user authentication. Any internet deployment must add HTTPS, authentication, authorization, rate limiting, monitoring, and a production database.
+- Multi-part plans use compensating cancellation rather than a distributed transaction, so the UI reports and retries any cleanup that the server has not confirmed.
+
 ## Repository layout
 
 ```text
@@ -158,9 +194,10 @@ server/                 Python MCP transport and reservation domain
 tests/                  Backend, HTTP, lifecycle, and portability tests
 web/src/mcp/            Live and deterministic MCP clients
 web/src/booking/        Frontend booking workflow
+web/src/itinerary/      Multi-reservation Occasion Concierge workflow
+web/src/hooks/          Push-to-talk and UI support hooks
 web/src/components/     Conversation, booking, and activity interfaces
 docs/mcp-contract.md    Public tool and error contract
-docs/demo-script.md     Recorded-demo runbook
 ```
 
 ## License
