@@ -8,7 +8,7 @@ import {
 } from '../contract/types';
 import * as replies from '../conversation/replies';
 import { completeSearch, understand } from '../conversation/understand';
-import { groupByPlace } from '../lib/places';
+import { findSlotAt, groupByPlace } from '../lib/places';
 import { splitIso, toIsoDateTime } from '../lib/time';
 import type { ToolClient, ToolError } from '../mcp/types';
 import { canConfirm, flowReducer, initialFlow, type FlowState, type Guest } from './flow';
@@ -228,6 +228,7 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
       const out = await client.callTool('get_listing_details', { listing_id: listingId });
       if (!out.ok) return fail(out.error);
       dispatch({ type: 'details_loaded', listingId, listing: out.data.listing });
+      say(replies.details(out.data.listing));
     }
 
     /** The countdown reached zero: ask the server for the booking, which applies the expiry. */
@@ -246,7 +247,7 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
       const places = groupByPlace(current.view === 'results' ? current.results : []);
       if (index !== null && !places[index]) return say(replies.noSuchOption(places.length));
       const candidates = index !== null ? places[index].slots : places.flatMap((place) => place.slots);
-      const slot = time ? candidates.find((result) => splitIso(result.start_time).time === time) : candidates[0];
+      const slot = time ? findSlotAt(candidates, time) : candidates[0];
       if (!slot) return say(replies.noSuchTime(time ?? ''));
       void hold(slot);
     }
@@ -259,6 +260,7 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
       const intent = understand(text, {
         now: nowRef.current(),
         resultNames: places.map((place) => place.name),
+        resultsProvider: current.search?.provider_type,
         hasHold: current.view === 'held' && current.current?.booking.status === 'held',
         hasBooking: current.current?.booking.status === 'confirmed',
         holdExpired: current.view === 'held' && current.current?.booking.status === 'expired',

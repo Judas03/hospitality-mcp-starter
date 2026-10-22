@@ -23,6 +23,8 @@ export interface Situation {
   now: Date;
   /** Names of the places on screen, in order. */
   resultNames: string[];
+  /** The kind of place those results are for. */
+  resultsProvider?: ProviderType;
   /** A hold is waiting for a yes or no. */
   hasHold: boolean;
   /** A booking is confirmed. */
@@ -233,6 +235,25 @@ export function pickResult(text: string, names: string[]): number | null {
   return byName >= 0 ? byName : null;
 }
 
+const ABOUT_IT =
+  /\b(tell me more|more (about|on) (it|this|that|this place|that place)|details?|info|what'?s (it|this|that)|what is (it|this|that))\b/;
+
+/**
+ * Whether a request asks for something other than the results on screen: another kind of place,
+ * a day, a service, a room type or a city. "Book a haircut tomorrow at 1 PM" is then a new search,
+ * not a pick of the 1 PM option among restaurant results.
+ */
+function startsNewSearch(text: string, situation: Situation): boolean {
+  const provider = parseProvider(text);
+  return (
+    (provider !== null && provider !== situation.resultsProvider) ||
+    parseDate(text, situation.now) !== null ||
+    parseService(text) !== null ||
+    parseRoom(text) !== null ||
+    parseLocation(text) !== null
+  );
+}
+
 function searchFields(text: string, now: Date): SearchFields {
   const fields: SearchFields = {};
   const provider = parseProvider(text);
@@ -282,13 +303,15 @@ export function understand(text: string, situation: Situation): Intent {
   if (situation.resultNames.length > 0) {
     const index = pickResult(t, situation.resultNames);
     const time = parseTime(t) ?? undefined;
-    if (/\b(details?|more about|tell me|what is|what's|info)\b/.test(t)) {
-      // With a single place on screen, "tell me more about it" can only mean that one.
-      const target = index ?? (situation.resultNames.length === 1 ? 0 : null);
-      if (target !== null) return { kind: 'details', index: target };
-    }
+    if (index !== null && /\b(details?|more about|tell me|what is|what's|info)\b/.test(t)) return { kind: 'details', index };
+    // With a single place on screen, "tell me more" or "what's it like" can only mean that one;
+    // "what's the weather like" means nothing here.
+    if (situation.resultNames.length === 1 && ABOUT_IT.test(t)) return { kind: 'details', index: 0 };
     const picking = /\b(hold|book|take|reserve|choose|pick|go with|want|get|that one|this one)\b/.test(t) || t.split(' ').length <= 4;
-    if ((index !== null || time) && picking) return time ? { kind: 'choose', index, time } : { kind: 'choose', index };
+    const newRequest = index === null && startsNewSearch(text, situation);
+    if (!newRequest && (index !== null || time) && picking) {
+      return time ? { kind: 'choose', index, time } : { kind: 'choose', index };
+    }
   }
 
   const fields = searchFields(text, situation.now);
