@@ -80,7 +80,9 @@ export function App() {
   else if (SCRIPTED && !script.ready) suggestions = [];
 
   const [readAloud, setReadAloud] = useState(false);
-  const speaking = useSpeech(agent.messages, readAloud);
+  // Nothing is read aloud while push-to-talk listens, so the page never transcribes itself.
+  const [listening, setListening] = useState(false);
+  const speaking = useSpeech(agent.messages, readAloud && !listening);
 
   const connect = useCallback(() => {
     setConnection({ status: 'connecting', mode: client.mode });
@@ -133,6 +135,7 @@ export function App() {
           onPick={(text) => (text === script.nextLine ? void script.playNext() : concierge.send(text))}
           chipsDisabled={script.playing}
           disabled={connection.status !== 'connected'}
+          onListeningChange={setListening}
         />
         <div className="side">
           {concierge.open ? (
