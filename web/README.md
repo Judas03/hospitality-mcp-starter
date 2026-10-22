@@ -40,6 +40,11 @@ hotel for two" (also a suggestion chip on the empty screen).
   if one ran out. If a confirmation fails, everything held or booked is released.
 - **Cancel whole plan** releases every booking. A booking the server doesn't show as released
   stays listed with its ID until **Retry cleanup** succeeds.
+- If a hold request gets no answer, a hold the page can't see may exist. The plan stays locked
+  (nothing can be held, dropped or started) until that hold has certainly run out (5 minutes),
+  or **Check again** finds the option free in a fresh search.
+- "Don't …" never does the step: "Don't confirm it" or "Do not cancel the plan" changes nothing,
+  here and in single bookings.
 
 ## Push-to-talk
 
