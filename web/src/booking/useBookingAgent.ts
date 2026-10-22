@@ -47,6 +47,13 @@ export interface Agent {
   setProvider(provider: ProviderType): void;
   retry(): void;
   dismissError(): void;
+  /** Adds a message to the conversation, for requests another flow (the concierge) answers. */
+  addMessage(role: ChatMessage['role'], text: string): void;
+  /**
+   * Lets go of an unconfirmed hold before another flow starts, and resolves to whether the server
+   * shows it gone (or there was none). A confirmed booking is never touched.
+   */
+  releaseHold(): Promise<boolean>;
 }
 
 const sameInstant = (a: string, b: string) => Date.parse(a) === Date.parse(b);
@@ -167,6 +174,24 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
       if (status === 'held') return release();
       if (status !== 'confirmed') return say(replies.NO_BOOKING);
       await cancelBooking(false);
+    }
+
+    async function releaseHold(): Promise<boolean> {
+      const current = stateRef.current;
+      if (current.busy) return false;
+      const booking = current.current?.booking;
+      if (booking?.status !== 'held') return true;
+      dispatch({ type: 'started', task: 'cancel' });
+      const out = await client.callTool('cancel_booking', { booking_id: booking.booking_id });
+      // Released only when the server says so: cancelled, or expired in the meantime.
+      const check = await client.callTool('get_booking', { booking_id: booking.booking_id });
+      if (check.ok && (check.data.booking.status === 'cancelled' || check.data.booking.status === 'expired')) {
+        dispatch({ type: 'cancelled', result: check.data });
+        return true;
+      }
+      const reason = !out.ok ? out.error.message : !check.ok ? check.error.message : replies.NOT_RELEASED;
+      dispatch({ type: 'failed', message: reason });
+      return false;
     }
 
     /**
@@ -332,6 +357,8 @@ export function useBookingAgent(client: ToolClient, now: () => Date = () => new 
         void lastStep.current?.();
       },
       dismissError: () => dispatch({ type: 'error_dismissed' }),
+      addMessage: add,
+      releaseHold,
     };
   }, [client]);
 

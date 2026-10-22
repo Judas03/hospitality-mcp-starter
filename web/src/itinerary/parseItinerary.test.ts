@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SearchAvailabilityInput } from '../contract/types';
-import { SEED_PROMPTS } from '../conversation/suggestions';
+import { PLAN_PROMPT, SEED_PROMPTS } from '../conversation/suggestions';
 import { MAIN_SCRIPT } from '../demo/script';
 import { ONE_PER_CATEGORY, parseItinerary } from './parseItinerary';
 import type { ParsedItinerary } from './types';
@@ -58,6 +58,12 @@ describe('parseItinerary: the issue’s example', () => {
     expect(providers(parsed)).toEqual(['hotel', 'restaurant', 'salon']);
     expect(parsed.legs.map((leg) => leg.search.date)).toEqual(['2026-10-23', '2026-10-23', '2026-10-23']);
     expect(parsed.legs[2]).toEqual({ search: MANICURE, assumed: ['location', 'party_size'] });
+  });
+
+  it('reads the suggestion chip as the same plan, with the city assumed', () => {
+    const parsed = plan(PLAN_PROMPT);
+    expect(parsed.legs.map((leg) => leg.search)).toEqual([MANICURE, QUIET_DINNER, RIVER_HOTEL]);
+    expect(parsed.legs.every((leg) => leg.assumed.includes('location'))).toBe(true);
   });
 
   it('does not take a colon inside a time as the end of a header', () => {

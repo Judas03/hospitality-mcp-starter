@@ -915,6 +915,85 @@ select {
   gap: 10px;
 }
 
+/* Occasion Concierge plan */
+
+.legs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card.leg[data-status='holding'],
+.card.leg[data-status='held'],
+.card.leg[data-status='confirming'],
+.card.leg[data-status='cancelling'] {
+  border-color: rgba(255, 197, 98, 0.45);
+}
+
+.card.leg[data-status='confirmed'] {
+  border-color: rgba(79, 216, 163, 0.45);
+}
+
+.card.leg[data-status='failed'],
+.card.leg[data-status='unresolved'] {
+  border-color: rgba(255, 122, 137, 0.45);
+}
+
+.leg-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.leg-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.leg-option select {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-small);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.note[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.note[data-tone='error'] {
+  color: var(--danger);
+}
+
+.card.plan-timer {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.plan-timer .meta {
+  flex-basis: 100%;
+}
+
+.unresolved {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
 /* Forms */
 
 .inline-form {

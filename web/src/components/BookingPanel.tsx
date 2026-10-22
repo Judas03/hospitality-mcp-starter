@@ -13,7 +13,8 @@ import { IconCalendar, IconCheck, IconClock, IconEdit, IconPin, IconSparkle, Ico
 const STEPS = ['Search', 'Hold', 'Confirm', 'Change or cancel'];
 const STEP_FOR_VIEW: Record<View, number> = { empty: 0, results: 1, held: 2, confirmed: 3, cancelled: 4 };
 
-export function BookingPanel({ agent }: { agent: Agent }) {
+/** `aside` goes above everything else, e.g. the strip that reopens a booked plan. */
+export function BookingPanel({ agent, aside }: { agent: Agent; aside?: ReactNode }) {
   const { state } = agent;
   const [editing, setEditing] = useState(false);
   const busy = state.busy !== null;
@@ -25,6 +26,7 @@ export function BookingPanel({ agent }: { agent: Agent }) {
         <BookingSteps view={state.view} />
       </div>
       <div className="panel-body">
+        {aside}
         {state.error && <ErrorMessage message={state.error.message} onRetry={agent.retry} onDismiss={agent.dismissError} />}
         {state.conflict && (
           <ConflictCard conflict={state.conflict} busy={busy} onChoose={(slot) => void agent.chooseAlternative(slot)} />

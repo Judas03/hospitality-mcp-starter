@@ -13,6 +13,7 @@ export const NOTHING_TO_CONFIRM = 'There’s nothing waiting for confirmation ye
 export const ALREADY_CONFIRMED = 'That booking is already confirmed.';
 export const NO_BOOKING = 'You don’t have a booking to change yet.';
 export const NO_CHANGE = 'That’s already how the booking is.';
+export const NOT_RELEASED = 'The server still shows the hold as active.';
 export const RELEASED = 'Okay, I let the hold go. Pick another option or ask for something else.';
 
 export function describeSearch(input: SearchAvailabilityInput): string {

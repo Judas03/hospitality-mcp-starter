@@ -1,23 +1,31 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Task } from '../booking/flow';
 import type { ChatMessage } from '../booking/useBookingAgent';
+import type { PlanTask } from '../itinerary/useOccasionConcierge';
 import { IconSend } from './icons';
 
 export type RingState = 'idle' | 'thinking' | 'speaking';
+/** The step running in either the single-booking flow or a plan. */
+export type BusyTask = Task | PlanTask;
 
-const BUSY_LABELS: Record<Task, string> = {
+const BUSY_LABELS: Record<BusyTask, string> = {
   search: 'Searching',
   hold: 'Placing a hold',
   confirm: 'Confirming',
   modify: 'Changing the booking',
   cancel: 'Cancelling',
   details: 'Looking it up',
+  plan_search: 'Searching every part of the plan',
+  plan_hold: 'Holding the plan',
+  plan_confirm: 'Confirming the plan',
+  plan_release: 'Releasing the plan',
+  plan_check: 'Checking the holds',
 };
 const RING_LABELS: Record<RingState, string> = { idle: 'Ready', thinking: 'Working on it', speaking: 'Replying' };
 
 interface ConversationPanelProps {
   messages: ChatMessage[];
-  busy: Task | null;
+  busy: BusyTask | null;
   speaking: boolean;
   suggestions: string[];
   onSend(text: string): void;
@@ -80,7 +88,7 @@ export function AssistantRing({ state }: { state: RingState }) {
   return <span className="ring" data-state={state} aria-hidden="true" />;
 }
 
-export function MessageList({ messages, busy }: { messages: ChatMessage[]; busy: Task | null }) {
+export function MessageList({ messages, busy }: { messages: ChatMessage[]; busy: BusyTask | null }) {
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const list = listRef.current;

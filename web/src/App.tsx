@@ -4,11 +4,13 @@ import { ActivityLog } from './components/ActivityLog';
 import { BookingPanel } from './components/BookingPanel';
 import { ConversationPanel } from './components/Conversation';
 import { StatusBanner } from './components/Feedback';
+import { ItineraryPanel, PlanStrip } from './components/ItineraryPanel';
 import { TopBar } from './components/TopBar';
 import { suggestionsFor } from './conversation/suggestions';
 import { useDemoScript } from './demo/useDemoScript';
 import { useActivityLog } from './hooks/useActivityLog';
 import { useSpeech } from './hooks/useSpeech';
+import { useOccasionConcierge } from './itinerary/useOccasionConcierge';
 import { DemoClient } from './mcp/demoClient';
 import { DEFAULT_MCP_URL, LiveClient } from './mcp/liveClient';
 import { errorText } from './mcp/loggingTransport';
@@ -68,8 +70,12 @@ export function App() {
   }, [client, logRival]);
   const makeQuietClient = useMemo(() => (SCRIPTED && MODE === 'live' ? () => new LiveClient(MCP_URL, () => {}) : null), []);
   const script = useDemoScript({ enabled: SCRIPTED, agent, rival, makeQuietClient });
+  // Every message goes through the concierge, which passes anything that isn't about a plan on to
+  // the agent. Only one tool step runs at a time across both.
+  const concierge = useOccasionConcierge(client, agent);
+  const busy = agent.state.busy ?? concierge.task;
   // While scripting, the next line is the only chip; normal suggestions return once the script ends.
-  let suggestions = suggestionsFor(agent.state);
+  let suggestions = concierge.suggestions ?? suggestionsFor(agent.state);
   if (SCRIPTED && script.nextLine) suggestions = [script.nextLine];
   else if (SCRIPTED && !script.ready) suggestions = [];
 
@@ -97,7 +103,7 @@ export function App() {
       <TopBar
         provider={agent.state.provider}
         onProvider={agent.setProvider}
-        locked={agent.state.busy !== null}
+        locked={busy !== null}
         connection={connection}
         endpoint={client.endpoint}
         onSwitchMode={SCRIPTED ? null : switchMode}
@@ -120,16 +126,25 @@ export function App() {
       <main className="layout">
         <ConversationPanel
           messages={agent.messages}
-          busy={agent.state.busy}
+          busy={busy}
           speaking={speaking}
           suggestions={suggestions}
-          onSend={agent.send}
-          onPick={(text) => (text === script.nextLine ? void script.playNext() : agent.send(text))}
+          onSend={concierge.send}
+          onPick={(text) => (text === script.nextLine ? void script.playNext() : concierge.send(text))}
           chipsDisabled={script.playing}
           disabled={connection.status !== 'connected'}
         />
         <div className="side">
-          <BookingPanel agent={agent} />
+          {concierge.open ? (
+            <ItineraryPanel concierge={concierge} blocked={agent.state.busy !== null} />
+          ) : (
+            <BookingPanel
+              agent={agent}
+              aside={
+                concierge.plan?.phase === 'confirmed' && <PlanStrip plan={concierge.plan} onShow={concierge.show} />
+              }
+            />
+          )}
           <ActivityLog entries={activity.entries} connection={connection} onClear={activity.clear} />
         </div>
       </main>
