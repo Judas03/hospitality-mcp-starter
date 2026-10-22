@@ -159,7 +159,7 @@ const PREFERENCES: Array<[RegExp, string]> = [
   [/\b(quiet|peaceful|calm)\b/, 'quiet'],
   [/\b(outdoors?|outside|terrace|al fresco)\b/, 'outdoor seating'],
   [/\b(indoors?|inside)\b/, 'indoor seating'],
-  [/\b(river ?view|riverside|by the river|on the river)\b/, 'river view'],
+  [/\b(river[- ]?view|riverside|by the river|on the river)\b/, 'river view'],
   [/\bthai (food|cuisine)\b/, 'thai cuisine'],
   [/\b(lively|buzzy)\b/, 'lively'],
   [/\b(accessible|wheelchair)\b/, 'accessible'],
@@ -254,7 +254,8 @@ function startsNewSearch(text: string, situation: Situation): boolean {
   );
 }
 
-function searchFields(text: string, now: Date): SearchFields {
+/** Every search field the text names; the itinerary reader uses it for each part of a plan. */
+export function searchFields(text: string, now: Date): SearchFields {
   const fields: SearchFields = {};
   const provider = parseProvider(text);
   const location = parseLocation(text);

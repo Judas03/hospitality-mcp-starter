@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { completeSearch, parseDate, parsePartySize, parseTime, understand, type Situation } from './understand';
+import {
+  completeSearch,
+  parseDate,
+  parsePartySize,
+  parsePreferences,
+  parseTime,
+  understand,
+  type Situation,
+} from './understand';
 
 // Wednesday 21 October 2026, 10:00 in Bangkok.
 const NOW = new Date('2026-10-21T03:00:00Z');
@@ -74,6 +82,11 @@ describe('understand: parts', () => {
     expect(parseDate('friday', NOW)).toBe('2026-10-23');
     expect(parseDate('wednesday', NOW)).toBe('2026-10-28');
     expect(parseDate('31 February', NOW)).toBeNull();
+  });
+
+  it('reads "river view" written with a hyphen as the backend’s feature', () => {
+    expect(parsePreferences('a river-view hotel')).toEqual(['river view']);
+    expect(parsePreferences('a riverview room')).toEqual(['river view']);
   });
 });
 
