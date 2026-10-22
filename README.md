@@ -162,3 +162,7 @@ web/src/components/     Conversation, booking, and activity interfaces
 docs/mcp-contract.md    Public tool and error contract
 docs/demo-script.md     Recorded-demo runbook
 ```
+
+## License
+
+This project is available under the [MIT License](LICENSE).
