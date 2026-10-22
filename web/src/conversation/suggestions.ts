@@ -10,6 +10,10 @@ export const SEED_PROMPTS: Record<ProviderType, string[]> = {
   hotel: ['Hotel room with a river view for 2 tomorrow', 'Suite for 4 this Friday'],
 };
 
+/** The Occasion Concierge's example: three bookings from one request. */
+export const PLAN_PROMPT =
+  'Plan my anniversary tomorrow: a manicure for me at 3 PM, a quiet dinner for two at 7 PM and a river-view hotel for two';
+
 /** Suggestion chips for what the guest is most likely to say next. */
 export function suggestionsFor(state: FlowState): string[] {
   if (state.busy) return [];
@@ -39,5 +43,5 @@ export function suggestionsFor(state: FlowState): string[] {
     chips.push(places.length > 1 ? 'Tell me more about the second one' : 'Tell me more about it');
     return chips;
   }
-  return SEED_PROMPTS[state.provider];
+  return [...SEED_PROMPTS[state.provider], PLAN_PROMPT];
 }

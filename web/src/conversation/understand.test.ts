@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { completeSearch, parseDate, parsePartySize, parseTime, understand, type Situation } from './understand';
+import {
+  completeSearch,
+  parseDate,
+  parsePartySize,
+  parsePreferences,
+  parseTime,
+  understand,
+  type Situation,
+} from './understand';
 
 // Wednesday 21 October 2026, 10:00 in Bangkok.
 const NOW = new Date('2026-10-21T03:00:00Z');
@@ -75,6 +83,11 @@ describe('understand: parts', () => {
     expect(parseDate('wednesday', NOW)).toBe('2026-10-28');
     expect(parseDate('31 February', NOW)).toBeNull();
   });
+
+  it('reads "river view" written with a hyphen as the backend’s feature', () => {
+    expect(parsePreferences('a river-view hotel')).toEqual(['river view']);
+    expect(parsePreferences('a riverview room')).toEqual(['river view']);
+  });
 });
 
 describe('understand: the conversation around a booking', () => {
@@ -87,6 +100,26 @@ describe('understand: the conversation around a booking', () => {
     expect(understand('Hold the first one', results)).toEqual({ kind: 'choose', index: 0 });
     expect(understand('Tell me more about the second one', results)).toEqual({ kind: 'details', index: 1 });
     expect(understand('Riverside please', results)).toEqual({ kind: 'choose', index: 1 });
+  });
+
+  it('does nothing when told not to hold, confirm, change, release or cancel', () => {
+    expect(understand('Don’t hold the first one', results)).toEqual({ kind: 'negated', action: 'hold' });
+    expect(understand("Don't confirm it", holding)).toEqual({ kind: 'negated', action: 'confirm' });
+    expect(understand('Do not confirm', holding)).toEqual({ kind: 'negated', action: 'confirm' });
+    expect(understand('Please don’t confirm it yet', holding)).toEqual({ kind: 'negated', action: 'confirm' });
+    expect(understand('No, don’t release it', holding)).toEqual({ kind: 'negated', action: 'release' });
+    expect(understand("Don't move it to 8 PM", booked)).toEqual({ kind: 'negated', action: 'change' });
+    expect(understand('Do not make it 3 people', booked)).toEqual({ kind: 'negated', action: 'change' });
+    expect(understand('I don’t want to cancel my booking', booked)).toEqual({ kind: 'negated', action: 'cancel' });
+    expect(understand('Never cancel it', booked)).toEqual({ kind: 'negated', action: 'cancel' });
+  });
+
+  it('still acts on requests that only mention "no" or "not"', () => {
+    expect(understand('No, release it', holding)).toEqual({ kind: 'decline' });
+    expect(understand('Cancel it, I don’t need it any more', booked)).toEqual({ kind: 'cancel' });
+    expect(understand('Don’t forget to confirm it', holding)).toEqual({ kind: 'confirm' });
+    expect(understand('Hold the 7:30 PM one, not the 7 PM one', results)).toMatchObject({ kind: 'choose', time: '19:30' });
+    expect(understand('Find a table for 2 tomorrow, not outdoors', idle).kind).toBe('search');
   });
 
   it('picks a time, with or without a place', () => {

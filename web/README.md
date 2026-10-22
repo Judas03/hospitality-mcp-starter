@@ -22,6 +22,42 @@ server first (`python -m server.mcp_server` in the repository root).
   message in the activity panel is tagged `demo`.
 - **Short holds for a recording (demo mode):** `?mode=demo&hold=20` makes holds last 20 seconds.
 
+## Occasion Concierge
+
+One request can book a salon visit, a meal and a hotel stay together, for example "Plan my
+anniversary tomorrow: a manicure for me at 3 PM, a quiet dinner for two at 7 PM and a river-view
+hotel for two" (also a suggestion chip on the empty screen).
+
+- A request becomes a plan only when it has parts in at least two of salon, restaurant and
+  hotel. Everything else goes to the single-booking flow as before. A plan has one part per kind
+  and one day.
+- Every part is searched and shown in the plan panel. Each part takes the cheapest option at the
+  first-ranked place and time, and you can change it there. Nothing is held until **Hold whole
+  plan**.
+- Parts are held one by one. If one can't be held, the earlier holds are released, and checked
+  with the server, before the plan shows that part's alternatives.
+- **Confirm whole plan** (or "yes") first checks every hold with the server and confirms nothing
+  if one ran out. If a confirmation fails, everything held or booked is released.
+- **Cancel whole plan** releases every booking. A booking the server doesn't show as released
+  stays listed with its ID until **Retry cleanup** succeeds.
+- If a hold request gets no answer, a hold the page can't see may exist. The plan stays locked
+  (nothing can be held, dropped or started) until that hold has certainly run out (5 minutes),
+  or **Check again** finds the option free in a fresh search.
+- "Don't …" never does the step: "Don't confirm it" or "Do not cancel the plan" changes nothing,
+  here and in single bookings.
+
+## Push-to-talk
+
+Hold the microphone button next to the message box (or focus it and hold Space or Enter) and
+speak; let go to stop. What was heard goes into the message box for you to read and send.
+Nothing is sent, held, confirmed or cancelled by voice alone, and Escape throws it away.
+
+- It needs a browser with Web Speech recognition (Chrome, Edge or Safari). Elsewhere the button is
+  off and typing works as usual.
+- The app does not record or store audio. The browser does the speech recognition, which may be
+  processed by the browser vendor's speech service and depends on that browser's microphone
+  permission, availability and network. Typing always works.
+
 ## Recording the demo
 
 Open the page with `?script=main` (add `&mode=demo` to run without the server). The only
@@ -55,8 +91,12 @@ npm run build
 MCP_TEST_URL=http://127.0.0.1:8000/mcp npm test
 ```
 
+In PowerShell: `$env:MCP_TEST_URL="http://127.0.0.1:8000/mcp"; npm test`.
+
 They connect to the server, compare its search results with demo mode's, and run a booking
-from hold to cancel on 15 January 2027, cancelling what they create.
+from hold to cancel on 15 January 2027. They also run an Occasion Concierge plan on 16 January
+2027, including a second guest taking a table or a room so the plan has to release its earlier
+holds. They cancel what they create.
 
 ## Where things are
 
@@ -65,4 +105,6 @@ from hold to cancel on 15 January 2027, cancelling what they create.
 - `src/mcp/demoClient.ts`, `src/mcp/demoData.ts`: demo mode, kept in step with the backend.
 - `src/conversation/`: reading typed requests, replies and suggestion chips.
 - `src/booking/`: the booking steps and the hook that runs them.
-- `src/components/`: the conversation, booking panel and activity log.
+- `src/itinerary/`: the Occasion Concierge: reading a plan, its steps, and the MCP calls that run them.
+- `src/hooks/useVoiceInput.ts`: push-to-talk.
+- `src/components/`: the conversation, booking and plan panels, and the activity log.
